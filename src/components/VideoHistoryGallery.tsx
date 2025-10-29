@@ -58,6 +58,20 @@ export function VideoHistoryGallery({ videoHistory, onRemix, onDelete, apiKey }:
     return `${minutes}m remaining`;
   };
 
+  const handleOpenInSceneBuilder = (metadata: VideoMetadata) => {
+    if (!apiKey) return;
+
+    // Navigate to Scene Builder with import params
+    const importMode = isVideoExpired(metadata) ? 'extend' : 'remix';
+    const params = new URLSearchParams({
+      import: 'true',
+      videoId: metadata.openaiVideoId,
+      mode: importMode,
+    });
+
+    window.location.href = `/scene-builder?${params.toString()}`;
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {videoHistory.map((metadata) => {
@@ -97,6 +111,14 @@ export function VideoHistoryGallery({ videoHistory, onRemix, onDelete, apiKey }:
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors text-sm"
                   >
                     🎨 Remix
+                  </button>
+                  <button
+                    onClick={() => handleOpenInSceneBuilder(metadata)}
+                    disabled={!apiKey}
+                    title="Open in Scene Builder"
+                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition-colors text-sm disabled:opacity-50"
+                  >
+                    Scene Builder
                   </button>
                   <button
                     onClick={() => handleRedownload(metadata)}

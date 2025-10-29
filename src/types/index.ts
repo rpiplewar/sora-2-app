@@ -160,6 +160,12 @@ export interface Scene {
   initialConfig: GenerationConfig; // Original parameters (seconds, size, model)
 }
 
+// Video import from homepage to Scene Builder
+export interface ImportConfig {
+  videoMetadata: VideoMetadata;  // From homepage history
+  importMode: 'remix' | 'extend';  // Based on expiration
+}
+
 // Scene Builder - Store State
 export interface SceneBuilderState {
   // Current state
@@ -168,12 +174,22 @@ export interface SceneBuilderState {
   editedPrompt: string;           // Prompt being edited (not yet analyzed)
   deltaAnalysis: PromptDelta | null; // Latest delta from GPT-4
   lastFramePreview: string | null;  // Object URL for last frame preview (after approval)
+  importedFrom: VideoMetadata | null;  // Track source video
 
   // Processing state
   isAnalyzingDelta: boolean;      // GPT-4 analysis in progress
   isRemixing: boolean;            // Video generation in progress
   remixProgress: number;          // 0-100
   error: string | null;
+
+  // Timeline state
+  timelineVideoBlobId: string | null;  // Reference to concatenated video blob
+  timelineDuration: number;            // Total duration in seconds
+  sceneDurations: number[];            // Duration per scene [4, 8, 4, 12]
+  cumulativeDurations: number[];       // Cumulative [0, 4, 12, 16, 28]
+  currentPlaybackTime: number;         // Current video position (0-28s)
+  isTimelineMode: boolean;             // True when timeline view active
+  isRegeneratingTimeline: boolean;     // True when concatenating videos
 
   // Actions
   createScene: (config: GenerationConfig) => Promise<void>;
@@ -182,7 +198,15 @@ export interface SceneBuilderState {
   remixScene: () => Promise<void>;
   approveVersion: () => Promise<void>;
   extendToNextScene: () => Promise<void>;
+  importFromHomepage: (config: ImportConfig) => Promise<void>;
   reset: () => void; // Clear all state
+
+  // Timeline actions
+  generateTimeline: () => Promise<void>;
+  updatePlaybackTime: (time: number) => void;
+  seekToScene: (sceneId: string) => void;
+  toggleTimelineMode: () => void;
+  invalidateTimeline: () => void;
 
   // Version control (via Zundo temporal)
   // undo/redo provided by temporal middleware

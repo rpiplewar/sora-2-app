@@ -11,8 +11,8 @@ export function DeltaDisplay() {
 
       <div className="delta-summary">
         <p><strong>Summary:</strong> {deltaAnalysis.summary}</p>
-        <span className={`remix-type ${deltaAnalysis.remix_type}`}>
-          {deltaAnalysis.remix_type.replace('_', ' ')}
+        <span className="remix-type-text">
+          ({deltaAnalysis.remix_type.replace('_', ' ')})
         </span>
       </div>
 
@@ -25,27 +25,9 @@ export function DeltaDisplay() {
                 <span className="change-category">{change.category}:</span>
                 <span className="change-description">{change.description}</span>
                 {!change.continuity_safe && (
-                  <span className="warning-badge">⚠️ May affect continuity</span>
+                  <span className="warning-badge">May affect continuity</span>
                 )}
               </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {deltaAnalysis.preserved.length > 0 && (
-        <div className="delta-preserved">
-          <h4>Preserved:</h4>
-          <p>{deltaAnalysis.preserved.join(', ')}</p>
-        </div>
-      )}
-
-      {deltaAnalysis.warnings && deltaAnalysis.warnings.length > 0 && (
-        <div className="delta-warnings">
-          <h4>⚠️ Warnings:</h4>
-          <ul>
-            {deltaAnalysis.warnings.map((warning, i) => (
-              <li key={i}>{warning}</li>
             ))}
           </ul>
         </div>

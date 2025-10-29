@@ -19,17 +19,22 @@ export function SceneCanvas() {
       if (blob) {
         const url = URL.createObjectURL(blob);
         setVideoUrl(url);
+
+        // Cleanup: revoke URL when version changes or unmounts
         return () => URL.revokeObjectURL(url);
       }
     }
-  }, [currentVersion?.videoBlobId, getBlob]);
+
+    // Clear video URL if no current version
+    setVideoUrl(undefined);
+  }, [currentSceneId, currentVersion?.videoBlobId, currentVersion?.id, getBlob]);
 
   if (isRemixing) {
     return (
       <div className="scene-canvas loading">
         <div className="progress-container">
           <div className="progress-bar" style={{ width: `${remixProgress}%` }} />
-          <p>Generating remix... {remixProgress}%</p>
+          <p>Generating...</p>
         </div>
       </div>
     );
@@ -49,12 +54,6 @@ export function SceneCanvas() {
         muted
         className="scene-video"
       />
-
-      <div className="scene-metadata">
-        <p>Scene: {currentScene?.id}</p>
-        <p>Version: {currentVersion?.id}</p>
-        <p>Duration: {currentScene?.initialConfig.seconds}s</p>
-      </div>
     </div>
   );
 }

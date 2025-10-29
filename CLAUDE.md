@@ -144,6 +144,45 @@ All types are centralized in `src/types/index.ts`:
 - Polling interval: 2 seconds (avoids rate limiting)
 - FFmpeg initialization: Async, non-blocking
 
+## Scene Builder - Video Import
+
+### Importing from Homepage
+
+Users can import videos generated on the homepage into Scene Builder:
+
+1. **From Homepage**: Click "Scene Builder" button on any video card
+2. **Auto-Import**: Scene Builder automatically loads the video
+3. **Mode Detection**:
+   - Videos <24h old: Full remix + extend capabilities
+   - Videos >24h old: Extend-only mode (remix disabled)
+
+### Import Flow
+
+```
+Homepage Video
+  ↓ (Click "Scene Builder")
+Navigate to /scene-builder?import=true&videoId={id}&mode={remix|extend}
+  ↓
+Scene Builder Mount
+  ↓
+Auto-download video from OpenAI
+  ↓
+Create initial scene from imported video
+```
+
+### Expiration Handling
+
+- 24-hour window enforced per OpenAI Remix API
+- Expired videos show warning: "Remix disabled, but you can extend it"
+- Analyze Changes and Remix Scene buttons disabled for expired videos
+- Approve & Continue still works (extension doesn't require remix API)
+
+### Key Files
+
+- `src/stores/sceneBuilderStore.ts`: `importFromHomepage()` action
+- `src/components/VideoHistoryGallery.tsx`: "Scene Builder" button
+- `src/pages/SceneBuilder.tsx`: Import detection on mount
+
 ## Common Development Tasks
 
 ### Adding New Video Parameters

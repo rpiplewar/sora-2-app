@@ -22,12 +22,8 @@ export function VersionControls() {
         aria-label="Undo"
         className="undo-button"
       >
-        ← Undo
+        Undo
       </button>
-
-      <span className="history-count">
-        {pastStates.length} / {futureStates.length}
-      </span>
 
       <button
         onClick={handleRedo}
@@ -36,7 +32,7 @@ export function VersionControls() {
         aria-label="Redo"
         className="redo-button"
       >
-        Redo →
+        Redo
       </button>
     </div>
   );

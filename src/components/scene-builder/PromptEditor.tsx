@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+import { isVideoExpired } from '../../types';
 
 export function PromptEditor() {
   const {
@@ -7,6 +9,7 @@ export function PromptEditor() {
     editedPrompt,
     deltaAnalysis,
     lastFramePreview,
+    importedFrom,
     isAnalyzingDelta,
     isRemixing,
     setEditedPrompt,
@@ -20,6 +23,14 @@ export function PromptEditor() {
   const currentVersion = currentScene?.versions.find(
     v => v.id === currentScene.currentVersionId
   );
+
+  // Sync editedPrompt when scene changes (after extending to new scene)
+  useEffect(() => {
+    if (currentVersion && !editedPrompt) {
+      // If editedPrompt is empty (after extending), sync with current version
+      setEditedPrompt(currentVersion.prompt);
+    }
+  }, [currentSceneId, currentVersion?.id]);
 
   const handleAnalyze = async () => {
     await analyzeDelta();
@@ -39,6 +50,7 @@ export function PromptEditor() {
 
   const hasChanges = editedPrompt !== currentVersion?.prompt;
   const isLocked = currentScene?.isLocked;
+  const isImportExpired = !!(importedFrom && isVideoExpired(importedFrom));
 
   return (
     <div className="prompt-editor">
@@ -48,10 +60,15 @@ export function PromptEditor() {
           <h3>Next Scene</h3>
           {lastFramePreview && (
             <div className="last-frame-preview">
-              <p className="preview-label">Continuing from:</p>
               <img src={lastFramePreview} alt="Last frame" className="preview-image" />
             </div>
           )}
+        </div>
+      )}
+
+      {isImportExpired && !isLocked && (
+        <div className="expiration-notice">
+          ⏰ This video is {">"} 24h old. Remix disabled, but you can extend it.
         </div>
       )}
 
@@ -70,16 +87,18 @@ export function PromptEditor() {
           <>
             <button
               onClick={handleAnalyze}
-              disabled={!hasChanges || isAnalyzingDelta || isRemixing}
+              disabled={!hasChanges || isAnalyzingDelta || isRemixing || isImportExpired}
               className="analyze-button"
+              title={isImportExpired ? 'Remix disabled - video >24h old' : ''}
             >
               {isAnalyzingDelta ? 'Analyzing...' : 'Analyze Changes'}
             </button>
 
             <button
               onClick={handleRemix}
-              disabled={!deltaAnalysis || isRemixing}
+              disabled={!deltaAnalysis || isRemixing || isImportExpired}
               className="remix-button primary"
+              title={isImportExpired ? 'Remix disabled - video >24h old' : ''}
             >
               {isRemixing ? 'Remixing...' : 'Remix Scene'}
             </button>
@@ -105,12 +124,6 @@ export function PromptEditor() {
           </button>
         )}
       </div>
-
-      {isLocked && !isRemixing && (
-        <div className="next-scene-notice">
-          ✨ Scene approved! Describe what happens next to continue your story.
-        </div>
-      )}
     </div>
   );
 }

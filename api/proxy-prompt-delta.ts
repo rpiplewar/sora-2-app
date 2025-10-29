@@ -13,7 +13,7 @@ Analyze the differences between two prompts and categorize changes by:
 
 Output JSON:
 {
-  "summary": "Brief overview of changes",
+  "summary": "Instruction-style remix prompt (e.g., 'Change the nationality from American to Brazilian')",
   "changes": [
     {
       "category": "visual_elements|motion|style|technical",
@@ -26,6 +26,13 @@ Output JSON:
   "remix_type": "minor_tweak|style_shift|major_rewrite",
   "warnings": ["Any continuity concerns"]
 }
+
+IMPORTANT: The "summary" field must be a concise INSTRUCTION for the remix API, not a description.
+Examples:
+- Good: "Change the boy's nationality from American to Brazilian"
+- Good: "Add sunset lighting and warm color grading"
+- Bad: "The main change is the nationality of the boy"
+- Bad: "The lighting has been modified to be warmer"
 
 Focus on semantic differences that affect visual output, not linguistic variations.
 `.trim();
