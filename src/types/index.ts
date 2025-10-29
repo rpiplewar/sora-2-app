@@ -119,3 +119,80 @@ export interface PromptFormData {
   numSegments: number;
   size: string;
 }
+
+// ============================================================================
+// Scene Builder Types - Video Remix Interface with Split-View Editing
+// ============================================================================
+
+// Scene Builder - Version Control
+export interface SceneVersion {
+  id: string;                    // Unique version ID (e.g., "v1", "v2")
+  openaiVideoId: string;         // OpenAI video_id for this version
+  prompt: string;                // Full prompt text for this version
+  videoBlob?: Blob;              // In-memory video (only for current session)
+  videoBlobId?: string;          // Reference to blob store
+  delta?: PromptDelta;           // Changes from previous version
+  createdAt: number;             // Timestamp
+  parentVersionId?: string;      // Previous version ID (for undo/redo)
+  isApproved: boolean;           // User locked this version
+}
+
+// Scene Builder - Prompt Delta Analysis
+export interface PromptDelta {
+  summary: string;                          // One-sentence overview
+  changes: Array<{
+    category: 'visual_elements' | 'motion' | 'style' | 'technical';
+    type: 'added' | 'removed' | 'modified';
+    description: string;
+    continuity_safe: boolean;
+  }>;
+  preserved: string[];                      // Unchanged elements
+  remix_type: 'minor_tweak' | 'style_shift' | 'major_rewrite';
+  warnings?: string[];                      // Continuity concerns
+}
+
+// Scene Builder - Scene State
+export interface Scene {
+  id: string;                     // Scene ID (e.g., "scene-1")
+  versions: SceneVersion[];       // All remix iterations for this scene
+  currentVersionId: string;       // Active version being viewed
+  isLocked: boolean;              // User approved and moved to next scene
+  initialConfig: GenerationConfig; // Original parameters (seconds, size, model)
+}
+
+// Scene Builder - Store State
+export interface SceneBuilderState {
+  // Current state
+  scenes: Scene[];                // All scenes in composition
+  currentSceneId: string | null;  // Active scene being edited
+  editedPrompt: string;           // Prompt being edited (not yet analyzed)
+  deltaAnalysis: PromptDelta | null; // Latest delta from GPT-4
+  lastFramePreview: string | null;  // Object URL for last frame preview (after approval)
+
+  // Processing state
+  isAnalyzingDelta: boolean;      // GPT-4 analysis in progress
+  isRemixing: boolean;            // Video generation in progress
+  remixProgress: number;          // 0-100
+  error: string | null;
+
+  // Actions
+  createScene: (config: GenerationConfig) => Promise<void>;
+  setEditedPrompt: (prompt: string) => void;
+  analyzeDelta: () => Promise<void>;
+  remixScene: () => Promise<void>;
+  approveVersion: () => Promise<void>;
+  extendToNextScene: () => Promise<void>;
+  reset: () => void; // Clear all state
+
+  // Version control (via Zundo temporal)
+  // undo/redo provided by temporal middleware
+}
+
+// Scene Builder - Blob Store (Separate from history)
+export interface BlobStoreState {
+  blobs: Map<string, Blob>;
+  addBlob: (id: string, blob: Blob) => void;
+  getBlob: (id: string) => Blob | undefined;
+  removeBlob: (id: string) => void;
+  clear: () => void;
+}
