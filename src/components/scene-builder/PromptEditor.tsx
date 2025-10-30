@@ -7,13 +7,13 @@ export function PromptEditor() {
     scenes,
     currentSceneId,
     editedPrompt,
-    deltaAnalysis,
+    // deltaAnalysis, // No longer needed - remix does analysis automatically
     lastFramePreview,
     importedFrom,
     isAnalyzingDelta,
     isRemixing,
     setEditedPrompt,
-    analyzeDelta,
+    // analyzeDelta, // No longer needed - remix does analysis automatically
     remixScene,
     approveVersion,
     extendToNextScene,
@@ -32,9 +32,10 @@ export function PromptEditor() {
     }
   }, [currentSceneId, currentVersion?.id]);
 
-  const handleAnalyze = async () => {
-    await analyzeDelta();
-  };
+  // No longer needed - remix does analysis automatically
+  // const handleAnalyze = async () => {
+  //   await analyzeDelta();
+  // };
 
   const handleRemix = async () => {
     await remixScene();
@@ -86,21 +87,12 @@ export function PromptEditor() {
         {!isLocked && (
           <>
             <button
-              onClick={handleAnalyze}
-              disabled={!hasChanges || isAnalyzingDelta || isRemixing || isImportExpired}
-              className="analyze-button"
-              title={isImportExpired ? 'Remix disabled - video >24h old' : ''}
-            >
-              {isAnalyzingDelta ? 'Analyzing...' : 'Analyze Changes'}
-            </button>
-
-            <button
               onClick={handleRemix}
-              disabled={!deltaAnalysis || isRemixing || isImportExpired}
+              disabled={!hasChanges || isRemixing || isImportExpired}
               className="remix-button primary"
               title={isImportExpired ? 'Remix disabled - video >24h old' : ''}
             >
-              {isRemixing ? 'Remixing...' : 'Remix Scene'}
+              {isAnalyzingDelta ? 'Analyzing...' : isRemixing ? 'Remixing...' : 'Remix Scene'}
             </button>
 
             <button

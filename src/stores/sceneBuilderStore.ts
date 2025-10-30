@@ -182,10 +182,10 @@ export const useSceneBuilderStore = create<SceneBuilderState>()(
 
         // Remix current scene with edited prompt
         remixScene: async () => {
-          const { currentSceneId, scenes, editedPrompt, deltaAnalysis } = get();
+          const { currentSceneId, scenes, editedPrompt } = get();
           const apiKey = storageService.getApiKey();
 
-          if (!apiKey || !currentSceneId || !deltaAnalysis) return;
+          if (!apiKey || !currentSceneId) return;
 
           const scene = scenes.find(s => s.id === currentSceneId);
           if (!scene) return;
@@ -195,6 +195,18 @@ export const useSceneBuilderStore = create<SceneBuilderState>()(
 
           try {
             set({ isRemixing: true, error: null, remixProgress: 0 });
+
+            // Analyze delta first (if not already analyzed)
+            let deltaAnalysis = get().deltaAnalysis;
+            if (!deltaAnalysis) {
+              set({ isAnalyzingDelta: true });
+              deltaAnalysis = await analyzePromptDelta(
+                currentVersion.prompt,
+                editedPrompt,
+                apiKey
+              );
+              set({ deltaAnalysis, isAnalyzingDelta: false });
+            }
 
             // Use delta summary as remix prompt
             const remixPrompt = deltaAnalysis.summary;
