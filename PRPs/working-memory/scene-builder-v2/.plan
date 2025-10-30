@@ -1,0 +1,1607 @@
+# SceneBuilder V2 Rebuild PRP (Pragmatic Reference Plan)
+
+**Feature**: Complete SceneBuilder Rebuild with Backend Integration, Timeline UI, and Proper Remix Flow
+
+**Version**: 2.0
+**Created**: 2025-10-31
+**Confidence Score**: 8/10 for one-pass implementation success
+
+---
+
+## 1. FEATURE GOAL
+
+### Primary Goal
+Completely rebuild the SceneBuilder feature from scratch by reverting to pre-SceneBuilder commits (commit `6764530`) and implementing a clean, functional video remix/extend workflow with:
+- Cloud storage backend for video persistence
+- Proper timeline UI with thumbnail filmstrip
+- Vertical remix history stack
+- Text-based remix with automatic change analysis
+- Seamless integration with existing planner mode
+
+### Deliverables
+1. **Git Branch Strategy**: Create new branch `scenebuilder-v2-rebuild`, revert to commit `6764530`
+2. **Backend Infrastructure**:
+   - Google Cloud Storage bucket for video storage
+   - Neon Postgres database for metadata (FREE tier)
+   - 4 new API endpoints for storage/retrieval
+3. **Core SceneBuilder Features**:
+   - Video import/creation interface (no homepage import needed)
+   - Text-based prompt editing with automatic remix analysis
+   - Vertical remix history stack (Original → Remix v1 → Remix v2 → Current)
+   - Timeline showing all scenes with thumbnail filmstrip
+   - Extend capability to add new scenes with frame continuity
+4. **UI Components** (8 new components):
+   - SceneBuilderPage (main container)
+   - VideoCanvas (current scene display)
+   - RemixHistoryStack (vertical version thumbnails)
+   - PromptEditor (text editing with auto-remix)
+   - TimelineView (horizontal filmstrip)
+   - TimelineThumbnail (individual thumbnail with click-to-seek)
+   - PlannerToggle (enable/disable planner mode)
+   - StorageIndicator (show storage status)
+
+### Success Definition
+- ✅ User can access previously created scenes from database
+- ✅ User can create new scene from prompt
+- ✅ User can edit prompt → system automatically generates remix with new prompt
+- ✅ User sees vertical stack of remix history (clickable to view old versions)
+- ✅ Timeline shows thumbnail filmstrip for all generated videos
+- ✅ User can click timeline thumbnail to jump to that point in video
+- ✅ User can extend scene (add new scene with frame continuity)
+- ✅ All videos stored in GCS with signed URLs for streaming
+- ✅ Planner mode works with toggle (existing functionality preserved)
+- ✅ Clean UI with proper layout (not ugly)
+
+---
+
+## 2. CONTEXT
+
+### Critical Architectural Knowledge
+
+```yaml
+project_architecture:
+  frontend:
+    framework: React + TypeScript + Vite
+    state_management: Zustand (keep existing pattern)
+    storage: sessionStorage (API key) + database (video metadata)
+    styling: CSS with scene-builder.css namespace
+
+  backend:
+    runtime: Vercel Edge Functions (NO migration to Next.js)
+    database: Neon Postgres (new - FREE tier, edge-compatible)
+    cloud_storage: Google Cloud Storage (new)
+    purpose: CORS proxy + video storage + metadata management
+
+  video_processing:
+    engine: FFmpeg.wasm (client-side only)
+    operations: Frame extraction, thumbnail generation
+    note: NO concatenation needed initially (timeline shows individual scenes)
+
+current_state:
+  branch: develop
+  last_commit: 9cc9a88 "updated ux to remove the step of reviewing the prompt"
+  revert_target: 6764530 "bug fixes" (before SceneBuilder commits)
+
+  commits_to_remove:
+    - cd8b753: "added remix capability"
+    - 297cfa4: "added scene builder"
+    - 1153186: "added scene builder but there are bugs"
+    - 9cc9a88: "updated ux to remove the step of reviewing the prompt"
+
+  files_that_will_be_removed:
+    pages:
+      - src/pages/SceneBuilder.tsx
+      - src/pages/Home.tsx (may need to restore depending on what changed)
+    components:
+      - src/components/scene-builder/DeltaDisplay.tsx
+      - src/components/scene-builder/PromptEditor.tsx
+      - src/components/scene-builder/SceneCanvas.tsx
+      - src/components/scene-builder/SceneCard.tsx
+      - src/components/scene-builder/TimelinePlayer.tsx
+      - src/components/scene-builder/TimelineTrack.tsx
+      - src/components/scene-builder/VersionControls.tsx
+      - src/components/scene-builder/VersionStack.tsx
+    stores:
+      - src/stores/sceneBuilderStore.ts
+      - src/stores/blobStore.ts
+    services:
+      - src/services/remixService.ts
+    hooks:
+      - src/hooks/useKeyboardShortcuts.ts
+    api:
+      - api/proxy-remix-video.ts
+      - api/proxy-prompt-delta.ts
+    styles:
+      - src/styles/scene-builder.css
+
+existing_features_to_preserve:
+  frame_extraction:
+    file: src/utils/videoFrameExtractor.ts
+    function: extractLastFrame(videoBlob: Blob) => Promise<Blob>
+    note: Working correctly, do not modify
+
+  planner_mode:
+    file: src/services/planningService.ts
+    function: planPrompts(apiKey, basePrompt, secondsPerSegment, numGenerations)
+    note: Keep as-is, add toggle to enable/disable in SceneBuilder
+
+  api_proxy_pattern:
+    dual_content_type: JSON and FormData support
+    files:
+      - api/proxy-create-video.ts (supports both JSON and FormData)
+      - api/proxy-get-status.ts (polling)
+      - api/proxy-plan-prompts.ts (GPT-4 for planning)
+
+  video_store:
+    file: src/stores/videoStore.ts
+    purpose: Homepage video history (localStorage-based)
+    note: Keep separate from SceneBuilder state
+
+sora_2_api_constraints:
+  video_expiration:
+    documented: 24 hours from creation
+    user_report: May be 1 hour now (unconfirmed)
+    recommendation: Implement both checks with warnings
+
+  remix_api:
+    endpoint: POST /v1/videos/{video_id}/remix
+    time_limit: Can only remix unexpired videos
+    parameters:
+      video_id: string (source video ID)
+      prompt: string (modification instructions)
+      model: "sora-2" | "sora-2-pro"
+      size: string (e.g., "1280x720")
+      seconds: string (MUST be string: "4", "8", "12")
+
+  extend_pattern:
+    no_dedicated_api: Use image-to-video with input_reference
+    implementation: Extract last frame → pass as input_reference
+    advantage: No time limits (works after expiration)
+
+  no_scene_metadata:
+    limitation: API does NOT return timestamps or scene info
+    implication: Must track scenes manually in application state
+```
+
+### External Dependencies & Resources
+
+```yaml
+new_npm_packages:
+  - "@google-cloud/storage": "^7.0.0"  # GCS SDK
+  - "@vercel/postgres": "^0.5.0"        # Database SDK (works with Neon)
+  - "@xzdarcy/react-timeline-editor": "^0.1.8"  # Timeline component
+
+ai_docs_reference:
+  # All created in PRPs/ai_docs/ for easy agent access
+  - PRPs/ai_docs/sora-2-api-reference.md       # Complete Sora 2 API documentation
+  - PRPs/ai_docs/video-timeline-patterns.md    # Timeline UI patterns and implementation
+  - PRPs/ai_docs/neon-postgres-setup.md        # Step-by-step Neon Postgres setup (FREE tier)
+  - PRPs/ai_docs/gcs-backend-setup.md          # Step-by-step GCS setup (for reference)
+
+key_documentation:
+  sora_api:
+    - https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/video-generation
+    - https://github.com/openai/openai-sora-sample-app (reference implementation)
+
+  timeline_ui:
+    - https://github.com/xzdarcy/react-timeline-editor (chosen library)
+    - https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback
+    - https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Optimizing_canvas
+
+  gcs_integration:
+    - https://cloud.google.com/storage/docs/access-control/signed-urls (presigned URLs)
+    - https://googleapis.dev/nodejs/storage/latest/ (Node.js SDK docs)
+    - https://vercel.com/docs/storage/vercel-postgres (database setup)
+
+codebase_patterns_to_follow:
+  state_management:
+    pattern: Zustand stores with TypeScript
+    example: src/stores/videoStore.ts lines 1-150
+    note: Use temporal middleware (zundo) for undo/redo if needed
+
+  api_endpoints:
+    pattern: Vercel Edge Functions with runtime: 'edge'
+    example: api/proxy-create-video.ts
+    error_handling: Always return JSON with error field
+
+  service_layer:
+    pattern: Singleton services with async methods
+    example: src/services/videoService.ts
+    note: Export single instance, not class
+```
+
+---
+
+## 3. IMPLEMENTATION TASKS
+
+### Phase 0: Preparation & Branch Setup (1 hour)
+
+**Task 0.1**: Create new branch and revert commits
+```bash
+# Create new branch from develop
+git checkout develop
+git checkout -b scenebuilder-v2-rebuild
+
+# Revert to pre-SceneBuilder state
+git reset --hard 6764530
+
+# Verify clean state
+git log --oneline -5
+# Should show: 6764530 bug fixes (HEAD)
+```
+
+**Task 0.2**: Document removed files for reference
+```bash
+# Save list of removed SceneBuilder files
+git diff --name-status develop > PRPs/working-memory/scene-builder-v2/removed-files.txt
+```
+
+### Phase 1: Backend Infrastructure Setup (4-6 hours)
+
+**Task 1.1**: Setup Google Cloud Storage bucket
+
+Follow exact steps from `PRPs/ai_docs/gcs-backend-setup.md` sections 1.1-1.5:
+1. Create GCS bucket: `gs://sora-2-app-videos`
+2. Configure CORS for web access
+3. Set lifecycle policy (Nearline after 30 days, delete after 365 days)
+4. Create service account with minimal permissions
+5. Download credentials JSON
+6. Add to Vercel env vars: `GCS_PROJECT_ID`, `GCS_CLIENT_EMAIL`, `GCS_PRIVATE_KEY`, `GCS_BUCKET_NAME`
+
+**Validation**: Run `gcloud storage buckets describe gs://sora-2-app-videos` and verify CORS/lifecycle policies.
+
+**Task 1.2**: Setup Neon Postgres database
+
+Follow `PRPs/ai_docs/neon-postgres-setup.md` Step 1-4:
+1. Create account at https://neon.tech (sign up with GitHub)
+2. Create project: `sora-2-app`
+3. Choose region closest to your Vercel deployment (e.g., US East)
+4. Copy connection string
+5. Add to Vercel env vars: `POSTGRES_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require`
+6. Install dependency: `npm install @vercel/postgres`
+
+**Validation**: Run `vercel env pull .env.local` and verify `POSTGRES_URL` exists.
+
+**Task 1.3**: Create database schema
+
+Follow `PRPs/ai_docs/neon-postgres-setup.md` Step 5.
+
+Create `scripts/init-db.sql`:
+```sql
+-- Video metadata table
+CREATE TABLE video_metadata (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  openai_video_id VARCHAR(255) UNIQUE NOT NULL,
+  local_id VARCHAR(255) UNIQUE NOT NULL,
+  prompt TEXT NOT NULL,
+  seconds INTEGER NOT NULL,
+  size VARCHAR(50) NOT NULL,
+  model VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  openai_expires_at TIMESTAMP WITH TIME ZONE,  -- From OpenAI API
+  gcs_path TEXT NOT NULL,
+  gcs_thumbnail_path TEXT,
+  remixed_from_id UUID REFERENCES video_metadata(id),
+  remix_count INTEGER DEFAULT 0,
+  user_session_id VARCHAR(255),
+  is_remix BOOLEAN DEFAULT FALSE,
+  parent_prompt TEXT  -- Original prompt before remix
+);
+
+-- Indexes for common queries
+CREATE INDEX idx_openai_video_id ON video_metadata(openai_video_id);
+CREATE INDEX idx_local_id ON video_metadata(local_id);
+CREATE INDEX idx_expires_at ON video_metadata(openai_expires_at);
+CREATE INDEX idx_user_session ON video_metadata(user_session_id, created_at DESC);
+
+-- Scene segments table (for multi-scene timelines)
+CREATE TABLE scene_segments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scene_id VARCHAR(255) NOT NULL,  -- SceneBuilder scene ID
+  video_id UUID REFERENCES video_metadata(id) ON DELETE CASCADE,
+  segment_number INTEGER NOT NULL,
+  prompt TEXT NOT NULL,
+  duration_seconds INTEGER NOT NULL,
+  gcs_path TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_scene_segments ON scene_segments(scene_id, segment_number);
+CREATE INDEX idx_video_segments ON scene_segments(video_id);
+```
+
+Run migration:
+```bash
+vercel env pull .env.local
+psql $POSTGRES_URL < scripts/init-db.sql
+```
+
+**Validation**: Run `psql $POSTGRES_URL -c "\dt"` to verify tables exist.
+
+**Task 1.4**: Install backend dependencies
+
+```bash
+npm install @google-cloud/storage @vercel/postgres
+```
+
+Update `package.json` and commit.
+
+**Task 1.5**: Create API endpoint - Get upload URL
+
+Create `api/get-upload-url.ts` with exact implementation from `PRPs/ai_docs/gcs-backend-setup.md` section 3.2.
+
+Test endpoint:
+```bash
+curl -X POST http://localhost:5173/api/get-upload-url \
+  -H "Content-Type: application/json" \
+  -d '{"fileName":"test.mp4","contentType":"video/mp4"}'
+```
+
+Expected response: `{ "uploadUrl": "https://...", "gcsPath": "gs://...", "objectName": "videos/..." }`
+
+**Task 1.6**: Create API endpoint - Save video metadata
+
+Create `api/save-video-metadata.ts` with exact implementation from `PRPs/ai_docs/gcs-backend-setup.md` section 3.2.
+
+Test endpoint:
+```bash
+curl -X POST http://localhost:5173/api/save-video-metadata \
+  -H "Content-Type: application/json" \
+  -d '{
+    "openaiVideoId":"video_test123",
+    "prompt":"A test video",
+    "seconds":8,
+    "size":"1280x720",
+    "model":"sora-2",
+    "gcsPath":"gs://sora-2-app-videos/videos/test.mp4"
+  }'
+```
+
+Expected response: Database row JSON with `id`, `local_id`, etc.
+
+**Task 1.7**: Create API endpoint - Get video download URL
+
+Create `api/get-video-url.ts` with implementation from `PRPs/ai_docs/gcs-backend-setup.md` section 3.2.
+
+**Task 1.8**: Create API endpoint - List user scenes
+
+Create `api/list-scenes.ts` with implementation from `PRPs/ai_docs/gcs-backend-setup.md` section 3.2.
+
+### Phase 2: Frontend Services Layer (3-4 hours)
+
+**Task 2.1**: Create cloud storage service
+
+Create `src/services/cloudStorageService.ts` with complete implementation from `PRPs/ai_docs/gcs-backend-setup.md` section 4.1.
+
+Key methods:
+- `uploadVideo(videoBlob, metadata, onProgress)`: Upload to GCS + save metadata
+- `loadVideo(videoId)`: Get signed download URL and fetch blob
+- `listScenes()`: Get user's scene history from database
+- `generateThumbnail(videoBlob)`: Extract first frame as JPEG
+- `getUserSessionId()`: Get or create session ID
+
+**Validation**: Test each method in browser console before proceeding.
+
+**Task 2.2**: Create thumbnail generator utility
+
+Create `src/utils/videoThumbnailGenerator.ts` with implementation from `PRPs/ai_docs/video-timeline-patterns.md`:
+
+```typescript
+export class SegmentThumbnailGenerator {
+  async generateThumbnails(
+    videoBlob: Blob,
+    segmentDuration: number,
+    interval: number = 1
+  ): Promise<ThumbnailData[]> {
+    // Implementation using Canvas API + requestVideoFrameCallback
+    // See PRPs/ai_docs/video-timeline-patterns.md for complete code
+  }
+}
+```
+
+**Task 2.3**: Update remix service for auto-remix
+
+Create `src/services/remixService.ts` (new file, not the old one):
+
+```typescript
+import { openaiService } from './openaiService';
+
+export const remixService = {
+  /**
+   * Automatically remix video when prompt changes
+   * No need for separate delta analysis - just use new prompt directly
+   */
+  async autoRemix(
+    openaiVideoId: string,
+    newPrompt: string,
+    parameters: {
+      model: string;
+      size: string;
+      seconds: string;
+    },
+    apiKey: string
+  ): Promise<VideoJob> {
+    // Call OpenAI remix API directly
+    const response = await fetch('/api/proxy-remix-video', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        apiKey,
+        videoId: openaiVideoId,
+        prompt: newPrompt,
+        ...parameters
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remix failed: ${response.statusText}`);
+    }
+
+    const job = await response.json();
+
+    // Poll until complete
+    return await openaiService.pollUntilComplete(job.id, apiKey);
+  }
+};
+```
+
+**Task 2.4**: Create remix API proxy endpoint
+
+Create `api/proxy-remix-video.ts`:
+
+```typescript
+export const config = { runtime: 'edge' };
+
+export default async function handler(req: Request) {
+  if (req.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+
+  try {
+    const { apiKey, videoId, prompt, model, size, seconds } = await req.json();
+
+    const response = await fetch(
+      `https://api.openai.com/v1/videos/${videoId}/remix`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt,
+          model,
+          size,
+          seconds,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      return new Response(error, { status: response.status });
+    }
+
+    const job = await response.json();
+    return Response.json(job);
+  } catch (error) {
+    console.error('Remix proxy error:', error);
+    return Response.json(
+      { error: 'Failed to remix video' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Phase 3: State Management (2-3 hours)
+
+**Task 3.1**: Create SceneBuilder Zustand store
+
+Create `src/stores/sceneBuilderStore.ts`:
+
+```typescript
+import { create } from 'zustand';
+import { cloudStorageService } from '../services/cloudStorageService';
+import { remixService } from '../services/remixService';
+import { openaiService } from '../services/openaiService';
+import { extractLastFrame } from '../utils/videoFrameExtractor';
+
+interface RemixVersion {
+  id: string;
+  prompt: string;
+  openaiVideoId: string;
+  videoLocalId: string;  // From database
+  videoBlob: Blob | null;  // Lazy-loaded
+  thumbnailUrl: string | null;
+  createdAt: number;
+  isLoading: boolean;
+}
+
+interface Scene {
+  id: string;
+  versions: RemixVersion[];  // Stack: [Original, Remix v1, Remix v2, ...]
+  currentVersionIndex: number;  // Points to active version
+  prompt: string;  // Editable prompt for next remix
+  isLocked: boolean;  // True after "Approve & Extend"
+  parameters: {
+    model: string;
+    size: string;
+    seconds: string;
+  };
+}
+
+interface SceneBuilderState {
+  scenes: Scene[];
+  currentSceneId: string | null;
+  isGenerating: boolean;
+  isRemixing: boolean;
+  isExtending: boolean;
+  plannerEnabled: boolean;
+  error: string | null;
+
+  // Actions
+  loadUserScenes: () => Promise<void>;
+  createNewScene: (prompt: string, parameters: Scene['parameters']) => Promise<void>;
+  remixCurrentVersion: () => Promise<void>;
+  selectVersion: (sceneId: string, versionIndex: number) => void;
+  extendScene: (newPrompt: string) => Promise<void>;
+  updatePrompt: (sceneId: string, prompt: string) => void;
+  togglePlanner: () => void;
+  loadVideoBlob: (versionId: string) => Promise<void>;
+}
+
+export const useSceneBuilderStore = create<SceneBuilderState>((set, get) => ({
+  scenes: [],
+  currentSceneId: null,
+  isGenerating: false,
+  isRemixing: false,
+  isExtending: false,
+  plannerEnabled: false,
+  error: null,
+
+  loadUserScenes: async () => {
+    try {
+      const scenesFromDB = await cloudStorageService.listScenes();
+
+      // Group by scene_id and create version stacks
+      const sceneMap = new Map<string, Scene>();
+
+      for (const video of scenesFromDB) {
+        if (!sceneMap.has(video.sceneId)) {
+          sceneMap.set(video.sceneId, {
+            id: video.sceneId,
+            versions: [],
+            currentVersionIndex: 0,
+            prompt: video.prompt,
+            isLocked: false,
+            parameters: video.parameters
+          });
+        }
+
+        const scene = sceneMap.get(video.sceneId)!;
+        scene.versions.push({
+          id: video.localId,
+          prompt: video.prompt,
+          openaiVideoId: video.openaiVideoId,
+          videoLocalId: video.localId,
+          videoBlob: null,  // Lazy-load on demand
+          thumbnailUrl: video.thumbnailUrl,
+          createdAt: video.createdAt,
+          isLoading: false
+        });
+      }
+
+      set({ scenes: Array.from(sceneMap.values()) });
+    } catch (error) {
+      set({ error: 'Failed to load scenes' });
+    }
+  },
+
+  createNewScene: async (prompt: string, parameters: Scene['parameters']) => {
+    set({ isGenerating: true, error: null });
+
+    try {
+      const apiKey = storageService.getApiKey();
+      if (!apiKey) throw new Error('API key required');
+
+      // Generate video
+      const job = await openaiService.createVideo({
+        apiKey,
+        prompt,
+        ...parameters
+      });
+
+      const completedJob = await openaiService.pollUntilComplete(job.id, apiKey);
+      const videoBlob = await openaiService.downloadVideo(completedJob.id, apiKey);
+
+      // Upload to cloud storage
+      const result = await cloudStorageService.uploadVideo(videoBlob, {
+        openaiVideoId: completedJob.id,
+        prompt,
+        seconds: parseInt(parameters.seconds),
+        size: parameters.size,
+        model: parameters.model
+      });
+
+      // Create new scene in state
+      const newScene: Scene = {
+        id: crypto.randomUUID(),
+        versions: [{
+          id: result.localId,
+          prompt,
+          openaiVideoId: completedJob.id,
+          videoLocalId: result.localId,
+          videoBlob,
+          thumbnailUrl: null,  // Generated during upload
+          createdAt: Date.now(),
+          isLoading: false
+        }],
+        currentVersionIndex: 0,
+        prompt,
+        isLocked: false,
+        parameters
+      };
+
+      set(state => ({
+        scenes: [...state.scenes, newScene],
+        currentSceneId: newScene.id,
+        isGenerating: false
+      }));
+    } catch (error) {
+      set({ error: 'Failed to create scene', isGenerating: false });
+    }
+  },
+
+  remixCurrentVersion: async () => {
+    const { currentSceneId, scenes } = get();
+    const scene = scenes.find(s => s.id === currentSceneId);
+    if (!scene) return;
+
+    set({ isRemixing: true, error: null });
+
+    try {
+      const apiKey = storageService.getApiKey();
+      if (!apiKey) throw new Error('API key required');
+
+      const currentVersion = scene.versions[scene.currentVersionIndex];
+      const newPrompt = scene.prompt;
+
+      // Call remix API
+      const job = await remixService.autoRemix(
+        currentVersion.openaiVideoId,
+        newPrompt,
+        scene.parameters,
+        apiKey
+      );
+
+      const videoBlob = await openaiService.downloadVideo(job.id, apiKey);
+
+      // Upload remixed video
+      const result = await cloudStorageService.uploadVideo(videoBlob, {
+        openaiVideoId: job.id,
+        prompt: newPrompt,
+        seconds: parseInt(scene.parameters.seconds),
+        size: scene.parameters.size,
+        model: scene.parameters.model,
+        remixedFrom: currentVersion.videoLocalId
+      });
+
+      // Add new version to stack
+      set(state => ({
+        scenes: state.scenes.map(s =>
+          s.id === currentSceneId
+            ? {
+                ...s,
+                versions: [
+                  ...s.versions,
+                  {
+                    id: result.localId,
+                    prompt: newPrompt,
+                    openaiVideoId: job.id,
+                    videoLocalId: result.localId,
+                    videoBlob,
+                    thumbnailUrl: null,
+                    createdAt: Date.now(),
+                    isLoading: false
+                  }
+                ],
+                currentVersionIndex: s.versions.length  // Point to new version
+              }
+            : s
+        ),
+        isRemixing: false
+      }));
+    } catch (error) {
+      set({ error: 'Failed to remix', isRemixing: false });
+    }
+  },
+
+  selectVersion: (sceneId: string, versionIndex: number) => {
+    set(state => ({
+      scenes: state.scenes.map(s =>
+        s.id === sceneId
+          ? { ...s, currentVersionIndex: versionIndex }
+          : s
+      )
+    }));
+  },
+
+  extendScene: async (newPrompt: string) => {
+    // Implementation: Extract last frame, create new scene with frame continuity
+    // Similar to existing implementation in videoStore.ts
+  },
+
+  updatePrompt: (sceneId: string, prompt: string) => {
+    set(state => ({
+      scenes: state.scenes.map(s =>
+        s.id === sceneId ? { ...s, prompt } : s
+      )
+    }));
+  },
+
+  togglePlanner: () => {
+    set(state => ({ plannerEnabled: !state.plannerEnabled }));
+  },
+
+  loadVideoBlob: async (versionId: string) => {
+    // Lazy-load video blob from GCS
+    const blob = await cloudStorageService.loadVideo(versionId);
+
+    set(state => ({
+      scenes: state.scenes.map(scene => ({
+        ...scene,
+        versions: scene.versions.map(v =>
+          v.id === versionId ? { ...v, videoBlob: blob, isLoading: false } : v
+        )
+      }))
+    }));
+  }
+}));
+```
+
+**Validation**: Test store actions in React DevTools.
+
+### Phase 4: UI Components (8-10 hours)
+
+**Task 4.1**: Create main SceneBuilder page
+
+Create `src/pages/SceneBuilder.tsx`:
+
+```typescript
+import React, { useEffect } from 'react';
+import { useSceneBuilderStore } from '../stores/sceneBuilderStore';
+import { VideoCanvas } from '../components/scene-builder/VideoCanvas';
+import { RemixHistoryStack } from '../components/scene-builder/RemixHistoryStack';
+import { PromptEditor } from '../components/scene-builder/PromptEditor';
+import { TimelineView } from '../components/scene-builder/TimelineView';
+import { PlannerToggle } from '../components/scene-builder/PlannerToggle';
+
+export const SceneBuilder: React.FC = () => {
+  const loadUserScenes = useSceneBuilderStore(state => state.loadUserScenes);
+
+  useEffect(() => {
+    loadUserScenes();
+  }, []);
+
+  return (
+    <div className="scene-builder">
+      <div className="scene-builder__header">
+        <h1>Scene Builder</h1>
+        <PlannerToggle />
+      </div>
+
+      <div className="scene-builder__main">
+        <div className="scene-builder__video-section">
+          <VideoCanvas />
+          <RemixHistoryStack />
+        </div>
+
+        <div className="scene-builder__editor-section">
+          <PromptEditor />
+        </div>
+      </div>
+
+      <div className="scene-builder__timeline">
+        <TimelineView />
+      </div>
+    </div>
+  );
+};
+```
+
+**Task 4.2**: Create VideoCanvas component
+
+Create `src/components/scene-builder/VideoCanvas.tsx`:
+
+```typescript
+import React, { useRef, useEffect } from 'react';
+import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+
+export const VideoCanvas: React.FC = () => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const { currentSceneId, scenes, loadVideoBlob } = useSceneBuilderStore();
+
+  const currentScene = scenes.find(s => s.id === currentSceneId);
+  const currentVersion = currentScene?.versions[currentScene.currentVersionIndex];
+
+  useEffect(() => {
+    if (currentVersion && !currentVersion.videoBlob && !currentVersion.isLoading) {
+      loadVideoBlob(currentVersion.id);
+    }
+  }, [currentVersion?.id]);
+
+  useEffect(() => {
+    if (videoRef.current && currentVersion?.videoBlob) {
+      const url = URL.createObjectURL(currentVersion.videoBlob);
+      videoRef.current.src = url;
+      return () => URL.revokeObjectURL(url);
+    }
+  }, [currentVersion?.videoBlob]);
+
+  if (!currentVersion) {
+    return (
+      <div className="video-canvas video-canvas--empty">
+        <p>No scene selected. Create a new scene to get started.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="video-canvas">
+      <video
+        ref={videoRef}
+        controls
+        className="video-canvas__player"
+      />
+      {currentVersion.isLoading && (
+        <div className="video-canvas__loader">Loading video...</div>
+      )}
+    </div>
+  );
+};
+```
+
+**Task 4.3**: Create RemixHistoryStack component
+
+Create `src/components/scene-builder/RemixHistoryStack.tsx`:
+
+```typescript
+import React from 'react';
+import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+
+export const RemixHistoryStack: React.FC = () => {
+  const { currentSceneId, scenes, selectVersion } = useSceneBuilderStore();
+
+  const currentScene = scenes.find(s => s.id === currentSceneId);
+  if (!currentScene || currentScene.versions.length <= 1) return null;
+
+  return (
+    <div className="remix-history-stack">
+      <h3>Remix History</h3>
+      <div className="remix-history-stack__versions">
+        {currentScene.versions.map((version, index) => (
+          <div
+            key={version.id}
+            className={`remix-version ${
+              index === currentScene.currentVersionIndex ? 'remix-version--active' : ''
+            }`}
+            onClick={() => selectVersion(currentSceneId!, index)}
+          >
+            <img
+              src={version.thumbnailUrl || '/placeholder.png'}
+              alt={`Version ${index + 1}`}
+              className="remix-version__thumbnail"
+            />
+            <div className="remix-version__label">
+              {index === 0 ? 'Original' : `Remix v${index}`}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+**Task 4.4**: Create PromptEditor component
+
+Create `src/components/scene-builder/PromptEditor.tsx`:
+
+```typescript
+import React from 'react';
+import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+
+export const PromptEditor: React.FC = () => {
+  const {
+    currentSceneId,
+    scenes,
+    updatePrompt,
+    remixCurrentVersion,
+    isRemixing
+  } = useSceneBuilderStore();
+
+  const currentScene = scenes.find(s => s.id === currentSceneId);
+
+  if (!currentScene) {
+    return <div className="prompt-editor prompt-editor--empty">No scene selected</div>;
+  }
+
+  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    updatePrompt(currentSceneId!, e.target.value);
+  };
+
+  const handleRemix = () => {
+    if (currentScene.prompt.trim()) {
+      remixCurrentVersion();
+    }
+  };
+
+  const hasChanges = currentScene.prompt !== currentScene.versions[currentScene.currentVersionIndex].prompt;
+
+  return (
+    <div className="prompt-editor">
+      <h3>Edit Prompt</h3>
+      <textarea
+        className="prompt-editor__textarea"
+        value={currentScene.prompt}
+        onChange={handlePromptChange}
+        placeholder="Describe your video scene..."
+        rows={6}
+      />
+
+      <button
+        className="prompt-editor__remix-btn"
+        onClick={handleRemix}
+        disabled={!hasChanges || isRemixing || currentScene.isLocked}
+      >
+        {isRemixing ? 'Remixing...' : 'Remix with New Prompt'}
+      </button>
+
+      {hasChanges && (
+        <p className="prompt-editor__hint">
+          Changes detected. Click "Remix" to generate new version.
+        </p>
+      )}
+    </div>
+  );
+};
+```
+
+**Task 4.5**: Create TimelineView component
+
+Create `src/components/scene-builder/TimelineView.tsx`:
+
+```typescript
+import React, { useState, useEffect } from 'react';
+import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+import { TimelineThumbnail } from './TimelineThumbnail';
+import { SegmentThumbnailGenerator } from '../../utils/videoThumbnailGenerator';
+
+export const TimelineView: React.FC = () => {
+  const { currentSceneId, scenes } = useSceneBuilderStore();
+  const [thumbnails, setThumbnails] = useState<ThumbnailData[]>([]);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const currentScene = scenes.find(s => s.id === currentSceneId);
+  const currentVersion = currentScene?.versions[currentScene.currentVersionIndex];
+
+  useEffect(() => {
+    if (currentVersion?.videoBlob) {
+      const generator = new SegmentThumbnailGenerator();
+      generator.generateThumbnails(
+        currentVersion.videoBlob,
+        parseInt(currentScene!.parameters.seconds),
+        1  // 1 thumbnail per second
+      ).then(setThumbnails);
+    }
+  }, [currentVersion?.videoBlob]);
+
+  if (!currentVersion) return null;
+
+  return (
+    <div className="timeline-view">
+      <div className="timeline-view__track">
+        {thumbnails.map((thumbnail, index) => (
+          <TimelineThumbnail
+            key={index}
+            thumbnail={thumbnail}
+            isActive={Math.floor(currentTime) === Math.floor(thumbnail.timestamp)}
+            onClick={() => {
+              // Seek video to this timestamp
+              const videoEl = document.querySelector('video');
+              if (videoEl) videoEl.currentTime = thumbnail.timestamp;
+            }}
+          />
+        ))}
+      </div>
+
+      <div
+        className="timeline-view__playhead"
+        style={{
+          left: `${(currentTime / parseInt(currentScene!.parameters.seconds)) * 100}%`
+        }}
+      />
+    </div>
+  );
+};
+```
+
+**Task 4.6**: Create TimelineThumbnail component
+
+Create `src/components/scene-builder/TimelineThumbnail.tsx`:
+
+```typescript
+import React from 'react';
+
+interface TimelineThumbnailProps {
+  thumbnail: {
+    timestamp: number;
+    url: string;
+  };
+  isActive: boolean;
+  onClick: () => void;
+}
+
+export const TimelineThumbnail: React.FC<TimelineThumbnailProps> = ({
+  thumbnail,
+  isActive,
+  onClick
+}) => {
+  return (
+    <div
+      className={`timeline-thumbnail ${isActive ? 'timeline-thumbnail--active' : ''}`}
+      onClick={onClick}
+    >
+      <img
+        src={thumbnail.url}
+        alt={`${thumbnail.timestamp}s`}
+        className="timeline-thumbnail__image"
+      />
+      <span className="timeline-thumbnail__time">
+        {thumbnail.timestamp.toFixed(1)}s
+      </span>
+    </div>
+  );
+};
+```
+
+**Task 4.7**: Create PlannerToggle component
+
+Create `src/components/scene-builder/PlannerToggle.tsx`:
+
+```typescript
+import React from 'react';
+import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+
+export const PlannerToggle: React.FC = () => {
+  const { plannerEnabled, togglePlanner } = useSceneBuilderStore();
+
+  return (
+    <div className="planner-toggle">
+      <label>
+        <input
+          type="checkbox"
+          checked={plannerEnabled}
+          onChange={togglePlanner}
+        />
+        Enable Planner Mode
+      </label>
+      {plannerEnabled && (
+        <p className="planner-toggle__hint">
+          Planner will generate multi-segment prompts automatically
+        </p>
+      )}
+    </div>
+  );
+};
+```
+
+**Task 4.8**: Create SceneBuilder CSS
+
+Create `src/styles/scene-builder.css`:
+
+```css
+.scene-builder {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1a1a1a;
+  color: #fff;
+}
+
+.scene-builder__header {
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scene-builder__main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.scene-builder__video-section {
+  flex: 2;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.scene-builder__editor-section {
+  flex: 1;
+  padding: 2rem;
+  border-left: 1px solid #333;
+  background: #222;
+}
+
+.scene-builder__timeline {
+  height: 150px;
+  border-top: 1px solid #333;
+  overflow-x: auto;
+  background: #1a1a1a;
+}
+
+/* Video Canvas */
+.video-canvas {
+  position: relative;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.video-canvas__player {
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+}
+
+.video-canvas--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  color: #666;
+}
+
+/* Remix History Stack */
+.remix-history-stack {
+  margin-top: 1rem;
+}
+
+.remix-history-stack__versions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  flex-direction: column;  /* Vertical stack */
+}
+
+.remix-version {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: #2a2a2a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.remix-version:hover {
+  background: #333;
+}
+
+.remix-version--active {
+  background: #444;
+  border: 2px solid #0066ff;
+}
+
+.remix-version__thumbnail {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.remix-version__label {
+  font-size: 0.875rem;
+  color: #ccc;
+}
+
+/* Prompt Editor */
+.prompt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.prompt-editor__textarea {
+  width: 100%;
+  padding: 1rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  resize: vertical;
+}
+
+.prompt-editor__remix-btn {
+  padding: 0.75rem 1.5rem;
+  background: #0066ff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s;
+}
+
+.prompt-editor__remix-btn:hover:not(:disabled) {
+  background: #0052cc;
+}
+
+.prompt-editor__remix-btn:disabled {
+  background: #333;
+  cursor: not-allowed;
+  color: #666;
+}
+
+.prompt-editor__hint {
+  font-size: 0.875rem;
+  color: #0066ff;
+  margin: 0;
+}
+
+/* Timeline View */
+.timeline-view {
+  position: relative;
+  height: 100%;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.timeline-view__track {
+  display: flex;
+  gap: 4px;
+  height: 100px;
+}
+
+.timeline-thumbnail {
+  position: relative;
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.timeline-thumbnail:hover {
+  border-color: #0066ff;
+}
+
+.timeline-thumbnail--active {
+  border-color: #0066ff;
+  box-shadow: 0 0 10px rgba(0, 102, 255, 0.5);
+}
+
+.timeline-thumbnail__image {
+  width: 120px;
+  height: 68px;
+  object-fit: cover;
+  display: block;
+}
+
+.timeline-thumbnail__time {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 0.75rem;
+}
+
+.timeline-view__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ff0000;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Planner Toggle */
+.planner-toggle {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.planner-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.planner-toggle__hint {
+  font-size: 0.875rem;
+  color: #999;
+  margin: 0;
+}
+```
+
+### Phase 5: Routing & Integration (1-2 hours)
+
+**Task 5.1**: Add SceneBuilder route
+
+Update `src/App.tsx`:
+
+```typescript
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Home } from './pages/Home';
+import { SceneBuilder } from './pages/SceneBuilder';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/scene-builder" element={<SceneBuilder />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+```
+
+**Task 5.2**: Add navigation link
+
+Update homepage to include link to SceneBuilder:
+
+```typescript
+<Link to="/scene-builder">
+  <button>Open Scene Builder</button>
+</Link>
+```
+
+### Phase 6: Testing & Polish (2-3 hours)
+
+**Task 6.1**: Manual testing checklist
+
+Test each workflow:
+1. ✅ Create new scene from prompt
+2. ✅ Video uploads to GCS and metadata saved to database
+3. ✅ Edit prompt and remix
+4. ✅ New remix appears in vertical history stack
+5. ✅ Click old version to preview
+6. ✅ Timeline shows thumbnails
+7. ✅ Click thumbnail to seek video
+8. ✅ Planner toggle works
+9. ✅ Reload page → scenes persist (loaded from database)
+10. ✅ Extend scene (frame continuity)
+
+**Task 6.2**: Error handling
+
+Add error boundaries and user-friendly error messages:
+- Network failures
+- OpenAI API errors
+- GCS upload failures
+- Database errors
+
+**Task 6.3**: Loading states
+
+Ensure all async operations show loading indicators:
+- Video generation
+- Remix processing
+- Video loading from GCS
+- Thumbnail generation
+
+**Task 6.4**: Performance optimization
+
+- Lazy-load video blobs (only load when viewing)
+- Cleanup blob URLs after use
+- Throttle thumbnail generation
+- Add intersection observer for timeline thumbnails
+
+### Phase 7: Documentation & Deployment (1 hour)
+
+**Task 7.1**: Update CLAUDE.md
+
+Add SceneBuilder V2 section documenting:
+- New architecture (backend + database + storage)
+- API endpoints
+- State management patterns
+- Component structure
+
+**Task 7.2**: Create migration guide
+
+Document for future developers:
+- Why V2 was rebuilt
+- What changed from V1
+- How to add new features
+
+**Task 7.3**: Deploy to production
+
+```bash
+# Push to remote
+git push origin scenebuilder-v2-rebuild
+
+# Create PR
+gh pr create --title "SceneBuilder V2: Complete Rebuild with Backend" \
+  --body "See PRPs/working-memory/scene-builder-v2/.plan for full implementation details"
+
+# After review, merge to main and deploy
+vercel --prod
+```
+
+---
+
+## 4. VALIDATION GATES
+
+### Gate 1: Backend Infrastructure (After Phase 1)
+- ✅ GCS bucket accessible via signed URLs
+- ✅ Database tables created with correct schema
+- ✅ All 4 API endpoints return 200 status codes
+- ✅ Test video can be uploaded and downloaded
+
+**Validation Command**:
+```bash
+# Test upload flow
+curl -X POST http://localhost:5173/api/get-upload-url -d '{"fileName":"test.mp4","contentType":"video/mp4"}'
+# Upload to returned URL
+# Verify in GCS console: https://console.cloud.google.com/storage/browser/sora-2-app-videos
+```
+
+### Gate 2: Services Layer (After Phase 2)
+- ✅ `cloudStorageService.uploadVideo()` successfully uploads test video
+- ✅ `cloudStorageService.loadVideo()` returns video blob
+- ✅ `cloudStorageService.listScenes()` returns user's scenes
+- ✅ `remixService.autoRemix()` calls remix API correctly
+
+**Validation Method**: Browser console testing with sample data
+
+### Gate 3: State Management (After Phase 3)
+- ✅ Store can create new scene
+- ✅ Store can remix existing scene
+- ✅ Store maintains version history correctly
+- ✅ Store persists data across page reloads (via database)
+
+**Validation Method**: React DevTools - inspect Zustand state after each action
+
+### Gate 4: UI Components (After Phase 4)
+- ✅ All components render without errors
+- ✅ VideoCanvas displays video correctly
+- ✅ RemixHistoryStack shows version thumbnails
+- ✅ PromptEditor enables editing and remixing
+- ✅ TimelineView generates thumbnails
+- ✅ Clicking timeline thumbnail seeks video
+
+**Validation Method**: Visual inspection + interaction testing
+
+### Gate 5: End-to-End Workflow (After Phase 6)
+- ✅ Complete user journey: Create → Remix → Extend → Reload
+- ✅ Videos persist across sessions
+- ✅ No console errors or warnings
+- ✅ Performance acceptable on desktop browsers
+
+**Validation Method**: Full user acceptance testing
+
+---
+
+## 5. FINAL VALIDATION CHECKLIST
+
+### Functional Requirements
+- [ ] User can access previously created scenes
+- [ ] User can create new scene from prompt
+- [ ] User can edit prompt and remix automatically
+- [ ] Remix history appears as vertical stack
+- [ ] User can click old versions to preview
+- [ ] Timeline shows thumbnail filmstrip
+- [ ] Clicking timeline thumbnail seeks video
+- [ ] User can extend scene with frame continuity
+- [ ] Planner mode works with toggle
+- [ ] All videos stored in GCS
+- [ ] Metadata stored in Postgres
+- [ ] Videos persist across browser sessions
+
+### Non-Functional Requirements
+- [ ] No ugly UI (clean, professional design)
+- [ ] No console errors in production build
+- [ ] Fast initial load (<3s on fast connection)
+- [ ] Responsive layout (works on 1280x720+ screens)
+- [ ] Error messages are user-friendly
+- [ ] Loading states provide feedback
+
+### Technical Requirements
+- [ ] Code follows existing patterns (Zustand, services, Edge Functions)
+- [ ] TypeScript types are complete and correct
+- [ ] No TypeScript errors (`npm run build` succeeds)
+- [ ] ESLint passes (`npm run lint`)
+- [ ] Git branch `scenebuilder-v2-rebuild` is clean
+- [ ] PR description references this PRP
+
+---
+
+## 6. CONFIDENCE ASSESSMENT
+
+### Confidence Score: 8/10
+
+**Reasoning**:
+- ✅ **Architecture is well-researched**: 3 comprehensive AI docs created with exact implementations
+- ✅ **Backend setup is straightforward**: GCS + Vercel Postgres have clear documentation
+- ✅ **Existing patterns are reusable**: Video generation, frame extraction, polling all work
+- ✅ **UI design is simplified**: Vertical stack + timeline is standard video editor pattern
+- ⚠️ **Potential risks**:
+  - GCS signed URL generation in Edge Functions (may need Node.js runtime)
+  - Timeline thumbnail generation performance (could be slow for long videos)
+  - Remix API time limits (1 hour vs 24 hours uncertainty)
+
+**Mitigation Strategies**:
+- Test GCS signed URLs early (Phase 1, Gate 1)
+- Implement lazy thumbnail loading with intersection observer
+- Add both 1-hour and 24-hour expiration warnings
+- Use Vercel Postgres connection pooling to avoid timeout issues
+
+---
+
+## 7. RESOURCES & REFERENCES
+
+### AI Documentation (Created for This PRP)
+- `PRPs/ai_docs/sora-2-api-reference.md` - Complete Sora 2 API reference with remix/extend patterns
+- `PRPs/ai_docs/video-timeline-patterns.md` - Timeline UI implementation with Canvas API
+- `PRPs/ai_docs/gcs-backend-setup.md` - Step-by-step GCS + backend setup guide
+
+### External Documentation
+- OpenAI Sora API: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/video-generation
+- GCS Signed URLs: https://cloud.google.com/storage/docs/access-control/signed-urls
+- Vercel Postgres: https://vercel.com/docs/storage/vercel-postgres
+- requestVideoFrameCallback: https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback
+
+### Code References
+- Existing video generation: `src/services/openaiService.ts` lines 10-120
+- Frame extraction: `src/utils/videoFrameExtractor.ts` lines 1-50
+- API proxy pattern: `api/proxy-create-video.ts` lines 15-75
+- Polling pattern: `src/services/openaiService.ts` lines 45-95
+
+---
+
+## NOTES
+
+### What User Explicitly Wanted
+1. ✅ Timeline with video frames (not working in V1)
+2. ✅ Remove edit mode/timeline mode toggle (always edit mode)
+3. ✅ Vertical remix history (Original → v1 → v2 → Current)
+4. ✅ Text prompt on face (no buried UI)
+5. ✅ Planner mode as toggle (keep existing, not timestamps)
+6. ✅ Store all videos (due to 1-hour download limit)
+7. ✅ Backend setup (GCS recommended)
+8. ✅ Access previously created scenes (not homepage import)
+9. ✅ Automatic remix analysis (no explicit button)
+
+### What User Did NOT Want
+- ❌ Homepage video import (removed from requirements)
+- ❌ Complicated edit mode toggle (always in edit mode)
+- ❌ Timestamp generation in planner (keep planner as-is)
+- ❌ Complex UI (wants clean, simple interface)
+
+### Implementation Philosophy
+- **Start from clean slate**: Revert to pre-SceneBuilder commit
+- **Backend-first approach**: Set up storage/database before UI
+- **Incremental validation**: Test each phase before proceeding
+- **Reuse existing patterns**: Don't reinvent what works (openaiService, frame extraction, etc.)
+- **User-centric UI**: Prioritize clarity over features
+
+---
+
+**END OF PRP**
