@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { ApiKeyInput } from './components/ApiKeyInput';
 import { PromptForm } from './components/PromptForm';
 import { PromptPlanner } from './components/PromptPlanner';
@@ -12,8 +13,9 @@ import { videoService } from './services/videoService';
 import { planningService } from './services/planningService';
 import { extractLastFrame } from './utils/videoFrameExtractor';
 import type { PromptFormData, VideoSegment, PlannedSegment } from './types';
+import { SceneBuilder } from './pages/SceneBuilder';
 
-export default function App() {
+function Home() {
   const {
     apiKey,
     isProcessing,
@@ -365,6 +367,14 @@ export default function App() {
           <p className="text-gray-600 text-lg max-w-2xl mx-auto leading-relaxed" style={{ fontFamily: 'Inter, sans-serif' }}>
             Generate extended AI videos with OpenAI Sora 2. Seamless frame continuity, AI-powered planning, and browser-based processing.
           </p>
+          <div className="mt-8">
+            <Link
+              to="/scene-builder"
+              className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              Open Scene Builder
+            </Link>
+          </div>
         </header>
 
         {showMobileWarning && (
@@ -455,5 +465,16 @@ export default function App() {
         </footer>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/scene-builder" element={<SceneBuilder />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

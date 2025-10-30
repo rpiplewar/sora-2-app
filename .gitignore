@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
 
 # Editor directories and files
 .vscode/*
@@ -23,3 +24,8 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# GCS credentials (NEVER commit these!)
+luminous-style-464500-c1-382597b71a58.json
+*-service-account.json
+gcs-service-account.json

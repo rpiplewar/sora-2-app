@@ -13,10 +13,13 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@google-cloud/storage": "^7.17.2",
+    "@vercel/postgres": "^0.10.0",
     "axios": "^1.12.2",
     "plyr": "^3.8.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.5",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
@@ -25,6 +28,7 @@
     "@types/node": "^22.10.5",
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
+    "@vercel/node": "^5.5.3",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.36.0",
