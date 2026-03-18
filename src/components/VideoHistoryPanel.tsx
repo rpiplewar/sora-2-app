@@ -27,23 +27,11 @@ interface VideoModalProps {
 }
 
 function VideoModal({ item, onClose, onReusePrompt }: VideoModalProps) {
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Use the server-side proxy to satisfy COEP require-corp.
+  // GCS signed URLs lack Cross-Origin-Resource-Policy headers so <video src>
+  // would be blocked; the proxy re-serves the video with that header set.
+  const videoUrl = `/api/proxy-video?videoId=${item.id}`;
   const overlayRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Get signed download URL from the API — streams directly, no blob download
-    fetch(`/api/get-video-url?videoId=${item.id}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.downloadUrl) {
-          setVideoUrl(data.downloadUrl);
-        } else {
-          setLoadError(data.error || 'Could not load video');
-        }
-      })
-      .catch(() => setLoadError('Failed to load video URL'));
-  }, [item.id]);
 
   // Close on Escape
   useEffect(() => {
@@ -88,21 +76,12 @@ function VideoModal({ item, onClose, onReusePrompt }: VideoModalProps) {
 
         {/* Video */}
         <div className="bg-black aspect-video flex items-center justify-center">
-          {loadError ? (
-            <p className="text-white/60 text-sm" style={{ fontFamily: 'Inter, sans-serif' }}>{loadError}</p>
-          ) : videoUrl ? (
-            <video
-              src={videoUrl}
-              controls
-              autoPlay
-              className="w-full h-full object-contain"
-            />
-          ) : (
-            <div className="flex flex-col items-center gap-2">
-              <div className="animate-spin rounded-full h-8 w-8 border-2 border-white/20 border-t-white" />
-              <p className="text-white/60 text-sm" style={{ fontFamily: 'Inter, sans-serif' }}>Loading video...</p>
-            </div>
-          )}
+          <video
+            src={videoUrl}
+            controls
+            autoPlay
+            className="w-full h-full object-contain"
+          />
         </div>
 
         {/* Footer actions */}
