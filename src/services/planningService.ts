@@ -8,7 +8,7 @@ export const planningService = {
    * Generate AI-planned prompts from a base prompt
    * @param apiKey - OpenAI API key
    * @param basePrompt - The base idea/script
-   * @param secondsPerSegment - Duration of each segment (4, 8, or 12)
+   * @param secondsPerSegment - Duration of each segment (4, 8, 12, 16, or 20)
    * @param numGenerations - Number of segments to generate
    * @returns Array of planned segments
    */

@@ -10,6 +10,7 @@ export const openaiService = {
    * @returns Video job with id and status
    */
   async createVideo(request: CreateVideoRequest): Promise<VideoJob> {
+    console.log('[OpenAI] Creating video:', { model: request.model, seconds: request.seconds, size: request.size, hasInputRef: !!request.inputReference });
     // If inputReference is provided, use FormData for multipart/form-data
     if (request.inputReference) {
       const formData = new FormData();
@@ -32,6 +33,7 @@ export const openaiService = {
 
     // Otherwise use JSON
     const response = await axios.post(`${API_BASE}/proxy-create-video`, request);
+    console.log('[OpenAI] Video job created:', { id: response.data.id, status: response.data.status });
     return response.data;
   },
 
@@ -61,9 +63,18 @@ export const openaiService = {
     apiKey: string,
     onProgress?: (progress: number) => void
   ): Promise<VideoJob> {
-    // eslint-disable-next-line no-constant-condition
+    const POLL_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+    const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
+    const startTime = Date.now();
+
     while (true) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > POLL_TIMEOUT_MS) {
+        throw new Error(`Video generation timed out after 20 minutes. Job ID: ${videoId}. Please try again.`);
+      }
+
       const job = await this.getVideoStatus(videoId, apiKey);
+      console.log(`[Poll] ${videoId}: status=${job.status}, progress=${job.progress ?? '?'}%, elapsed=${Math.round(elapsed / 1000)}s`);
 
       // Update progress if callback provided
       if (onProgress && job.progress !== undefined) {
@@ -80,8 +91,8 @@ export const openaiService = {
         throw new Error(job.error?.message || 'Video generation failed');
       }
 
-      // Wait 2 seconds before next poll (avoid rate limiting)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Wait 10 seconds before next poll (API recommends 10-20 seconds)
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
   },
 
@@ -93,6 +104,7 @@ export const openaiService = {
    * @returns Video blob
    */
   async downloadVideo(videoId: string, apiKey: string): Promise<Blob> {
+    console.log('[OpenAI] Downloading video:', videoId);
     const response = await axios.get(
       `https://api.openai.com/v1/videos/${videoId}/content`,
       {
@@ -101,6 +113,7 @@ export const openaiService = {
         responseType: 'blob',
       }
     );
+    console.log('[OpenAI] Video downloaded, size:', response.data.size, 'bytes');
     return response.data;
   },
 };

@@ -48,6 +48,7 @@ export default async function handler(req: Request) {
     }
 
     const data = await response.json();
+    console.log('[proxy-get-status] Job', videoId, ':', data.status, (data.progress ?? '?') + '%');
     return new Response(JSON.stringify(data), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }

@@ -13,6 +13,7 @@ import { videoService } from './services/videoService';
 import { planningService } from './services/planningService';
 import { extractLastFrame } from './utils/videoFrameExtractor';
 import type { PromptFormData, VideoSegment, PlannedSegment } from './types';
+import { getModelForSize } from './types';
 import { SceneBuilder } from './pages/SceneBuilder';
 
 function Home() {
@@ -130,6 +131,7 @@ function Home() {
       const videoBlobs: Blob[] = [];
       const segmentList: VideoSegment[] = [];
       let lastFrameBlob: Blob | undefined = undefined;
+      let hasFailures = false;
 
       // Generate each segment using planned prompts
       for (let i = 0; i < plannedSegments.length; i++) {
@@ -146,15 +148,23 @@ function Home() {
         setSegments([...segmentList]);
 
         try {
+          console.log(`[Segment ${i + 1}/${plannedSegments.length}] Starting generation...`, {
+            prompt: plannedSegments[i].prompt.slice(0, 50),
+            seconds: plannedSegments[i].seconds,
+            size: planConfig.size,
+            model: getModelForSize(planConfig.size),
+          });
+
           // Create video job with frame continuity (if not first segment)
           const job = await openaiService.createVideo({
             apiKey,
             prompt: plannedSegments[i].prompt,
             seconds: String(plannedSegments[i].seconds),
             size: planConfig.size,
-            model: 'sora-2',
+            model: getModelForSize(planConfig.size),
             inputReference: lastFrameBlob, // Use last frame from previous video
           });
+          console.log(`[Segment ${i + 1}] Job created: ${job.id}`);
 
           await openaiService.pollUntilComplete(job.id, apiKey, (segmentProgress) => {
             segment.progress = segmentProgress;
@@ -165,8 +175,10 @@ function Home() {
             setProgress(Math.round(baseProgress + segmentContribution));
           });
 
+          console.log(`[Segment ${i + 1}] Completed, downloading...`);
           setStatus(`Downloading segment ${i + 1}/${plannedSegments.length}...`);
           const blob = await openaiService.downloadVideo(job.id, apiKey);
+          console.log(`[Segment ${i + 1}] Downloaded: ${blob.size} bytes`);
           videoBlobs.push(blob);
 
           segment.status = 'completed';
@@ -180,16 +192,26 @@ function Home() {
             lastFrameBlob = await extractLastFrame(blob);
           }
         } catch (segmentError: any) {
+          console.error(`[Segment ${i + 1}] FAILED:`, segmentError.message);
           segment.status = 'failed';
           segment.error = segmentError.message || 'Failed to generate segment';
           setSegments([...segmentList]);
-          throw segmentError;
+          hasFailures = true;
+          // Continue with remaining segments instead of aborting all
         }
+      }
+
+      if (videoBlobs.length === 0) {
+        throw new Error('All segments failed to generate. Please try again.');
+      }
+
+      if (hasFailures) {
+        console.warn(`[Generation] Some segments failed. Proceeding with ${videoBlobs.length}/${plannedSegments.length} successful segments.`);
       }
 
       // Concatenate videos
       let finalBlob: Blob;
-      if (plannedSegments.length > 1) {
+      if (videoBlobs.length > 1) {
         setStatus('Concatenating videos...');
         setProgress(80);
 
@@ -249,6 +271,7 @@ function Home() {
       const videoBlobs: Blob[] = [];
       const segmentList: VideoSegment[] = [];
       let lastFrameBlob: Blob | undefined = undefined;
+      let hasFailures = false;
 
       // Generate each segment
       for (let i = 0; i < formData.numSegments; i++) {
@@ -266,15 +289,23 @@ function Home() {
         setSegments([...segmentList]);
 
         try {
+          console.log(`[Segment ${i + 1}/${formData.numSegments}] Starting generation...`, {
+            prompt: formData.prompt.slice(0, 50),
+            seconds: formData.seconds,
+            size: formData.size,
+            model: getModelForSize(formData.size),
+          });
+
           // Create video job with frame continuity (if not first segment)
           const job = await openaiService.createVideo({
             apiKey,
             prompt: formData.prompt,
             seconds: String(formData.seconds), // Convert to string for OpenAI API
             size: formData.size,
-            model: 'sora-2',
+            model: getModelForSize(formData.size),
             inputReference: lastFrameBlob, // Use last frame from previous video
           });
+          console.log(`[Segment ${i + 1}] Job created: ${job.id}`);
 
           // Poll for completion
           await openaiService.pollUntilComplete(job.id, apiKey, (segmentProgress) => {
@@ -289,8 +320,10 @@ function Home() {
           });
 
           // Download video
+          console.log(`[Segment ${i + 1}] Completed, downloading...`);
           setStatus(`Downloading segment ${i + 1}/${formData.numSegments}...`);
           const blob = await openaiService.downloadVideo(job.id, apiKey);
+          console.log(`[Segment ${i + 1}] Downloaded: ${blob.size} bytes`);
           videoBlobs.push(blob);
 
           // Mark segment as completed
@@ -305,16 +338,26 @@ function Home() {
             lastFrameBlob = await extractLastFrame(blob);
           }
         } catch (segmentError: any) {
+          console.error(`[Segment ${i + 1}] FAILED:`, segmentError.message);
           segment.status = 'failed';
           segment.error = segmentError.message || 'Failed to generate segment';
           setSegments([...segmentList]);
-          throw segmentError;
+          hasFailures = true;
+          // Continue with remaining segments instead of aborting all
         }
+      }
+
+      if (videoBlobs.length === 0) {
+        throw new Error('All segments failed to generate. Please try again.');
+      }
+
+      if (hasFailures) {
+        console.warn(`[Generation] Some segments failed. Proceeding with ${videoBlobs.length}/${formData.numSegments} successful segments.`);
       }
 
       // Concatenate videos
       let finalBlob: Blob;
-      if (formData.numSegments > 1) {
+      if (videoBlobs.length > 1) {
         setStatus('Concatenating videos...');
         setProgress(80);
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useSceneBuilderStore } from '../../stores/sceneBuilderStore';
+import { getModelForSize } from '../../types';
 
 export const PromptEditor = () => {
   const {
@@ -40,6 +41,8 @@ export const PromptEditor = () => {
               <option value="4">4 seconds</option>
               <option value="8">8 seconds</option>
               <option value="12">12 seconds</option>
+              <option value="16">16 seconds</option>
+              <option value="20">20 seconds</option>
             </select>
           </label>
 
@@ -48,11 +51,11 @@ export const PromptEditor = () => {
             <select value={size} onChange={(e) => setSize(e.target.value)}>
               <optgroup label="Landscape">
                 <option value="1280x720">1280x720 (HD Landscape)</option>
-                <option value="1920x1080">1920x1080 (Full HD Landscape)</option>
+                <option value="1920x1080">1920x1080 (Full HD Landscape - Pro)</option>
               </optgroup>
               <optgroup label="Portrait">
                 <option value="720x1280">720x1280 (HD Portrait)</option>
-                <option value="1080x1920">1080x1920 (Full HD Portrait)</option>
+                <option value="1080x1920">1080x1920 (Full HD Portrait - Pro)</option>
               </optgroup>
             </select>
           </label>
@@ -65,7 +68,7 @@ export const PromptEditor = () => {
               createNewScene(newScenePrompt, {
                 seconds,
                 size,
-                model: 'sora-2',
+                model: getModelForSize(size),
               });
               setNewScenePrompt('');
             }

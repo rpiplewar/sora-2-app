@@ -208,6 +208,7 @@ export const useSceneBuilderStore = create<SceneBuilderState>((set, get) => ({
 
   createNewScene: async (prompt: string, parameters: Scene['parameters']) => {
     set({ isGenerating: true, error: null });
+    console.log('[SceneBuilder] Creating new scene:', { prompt: prompt.slice(0, 50), parameters });
 
     try {
       const apiKey = getApiKey();
@@ -279,6 +280,7 @@ export const useSceneBuilderStore = create<SceneBuilderState>((set, get) => ({
     }
 
     set({ isRemixing: true, error: null });
+    console.log('[SceneBuilder] Remixing scene:', { sceneId: currentSceneId, newPrompt: scene.prompt.slice(0, 50) });
 
     try {
       const apiKey = getApiKey();
@@ -362,6 +364,7 @@ export const useSceneBuilderStore = create<SceneBuilderState>((set, get) => ({
     }
 
     set({ isExtending: true, error: null });
+    console.log('[SceneBuilder] Extending scene:', { sceneId: currentSceneId, newPrompt: newPrompt.slice(0, 50) });
 
     try {
       const apiKey = getApiKey();

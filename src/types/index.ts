@@ -27,11 +27,22 @@ export interface GenerationConfig {
   model: string;
 }
 
+// Valid seconds values for OpenAI Sora 2 API
+export const VALID_SECONDS = ['4', '8', '12', '16', '20'] as const;
+
+// Pro sizes require sora-2-pro model
+export const PRO_SIZES = ['1792x1024', '1024x1792', '1920x1080', '1080x1920'] as const;
+
+// Auto-select model based on size
+export function getModelForSize(size: string): 'sora-2' | 'sora-2-pro' {
+  return PRO_SIZES.includes(size as typeof PRO_SIZES[number]) ? 'sora-2-pro' : 'sora-2';
+}
+
 // OpenAI API Request Types
 export interface CreateVideoRequest {
   apiKey: string;
   prompt: string;
-  seconds: string; // OpenAI API expects string: '4', '8', or '12'
+  seconds: string; // OpenAI API expects string: '4', '8', '12', '16', or '20'
   size: string;
   model: string;
   remixedFromVideoId?: string; // Optional: ID of video to remix from

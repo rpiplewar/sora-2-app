@@ -51,11 +51,25 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Validate seconds value (must be '4', '8', or '12')
+    console.log('[proxy-create-video] Request:', { model, prompt: String(prompt)?.slice(0, 50), seconds: String(seconds), size });
+
+    // Validate seconds value (must be '4', '8', '12', '16', or '20')
     const secondsStr = String(seconds);
-    if (!['4', '8', '12'].includes(secondsStr)) {
+    const validSeconds = ['4', '8', '12', '16', '20'];
+    if (!validSeconds.includes(secondsStr)) {
       return new Response(JSON.stringify({
-        error: `Invalid seconds value: must be '4', '8', or '12', got '${secondsStr}'`
+        error: `Invalid seconds value: must be one of ${validSeconds.join(', ')}, got '${secondsStr}'`
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Pro sizes require sora-2-pro model
+    const proSizes = ['1792x1024', '1024x1792', '1920x1080', '1080x1920'];
+    if (proSizes.includes(String(size)) && model !== 'sora-2-pro') {
+      return new Response(JSON.stringify({
+        error: `Pro resolution (${size}) requires model 'sora-2-pro', got '${model}'`
       }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
@@ -97,6 +111,8 @@ export default async function handler(req: Request) {
         }),
       });
     }
+
+    console.log('[proxy-create-video] OpenAI response status:', openaiResponse.status);
 
     // Check for errors
     if (!openaiResponse.ok) {
