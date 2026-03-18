@@ -1,0 +1,655 @@
+name: "Sora 2 API Fixes: 20-second limit, HD format, multi-segment generation"
+description: |
+  Three interconnected fixes for the Sora 2 video generation app:
+  1. Enable 16s and 20s video generation (API now supports it)
+  2. Fix HD format (1920x1080/1080x1920) — requires sora-2-pro model + validation
+  3. Fix multi-segment generation stopping — timeout + retry + polling rate fix
+
+---
+
+## Goal
+
+**Feature Goal**: Fix three production bugs in the Sora 2 video generation app so users can generate longer videos (up to 20s), HD 1080p videos (with sora-2-pro), and multi-segment videos that complete reliably without hanging.
+
+**Deliverable**:
+1. Updated validation in `proxy-create-video.ts` to accept `['4', '8', '12', '16', '20']` seconds
+2. Updated UI dropdowns in `PromptForm.tsx` and `PromptEditor.tsx` to offer 16s and 20s options
+3. Fixed HD format: auto-select `sora-2-pro` model when HD size is chosen; add server-side size+model validation
+4. Fixed polling in `openaiService.ts`: slower interval, 20-minute timeout, retry-safe error handling
+5. Fixed multi-segment loop in `App.tsx`: don't abort all segments on one failure; add per-segment timeout; informative logs
+6. Added comprehensive logging throughout for debugging
+
+**Success Definition**:
+- User can select 16s or 20s video duration and generate successfully
+- User can select 1920x1080 or 1080x1920 and app automatically uses `sora-2-pro`
+- Multi-segment generation completes even if one segment takes longer than usual
+- Stuck jobs (> 20 min) time out gracefully with user-visible error instead of hanging forever
+- Console logs clearly show what's happening at each step for debugging
+
+## User Persona
+
+**Target User**: Developer/creator using the Sora 2 app to generate AI videos
+
+**Use Case**:
+- Generating 20-second cinematic scenes for content creation
+- Creating HD 1080p videos for professional use
+- Generating multi-segment videos (2-5 clips) for extended narratives
+
+**Pain Points Addressed**:
+- Videos silently fail when HD size is selected (wrong model auto-selected)
+- Multi-segment generation freezes indefinitely with no error
+- Max video length is limited to 12s despite OpenAI now supporting 20s
+
+## Why
+
+- OpenAI announced 20-second clip support in March 2026 (new capability)
+- HD format is completely broken (API rejects `sora-2` model with `1920x1080` size)
+- Multi-segment generation hangs due to: (a) 2-second polling is too aggressive, (b) no timeout for stuck jobs, (c) first segment failure aborts everything
+- Users have no visibility into what's going wrong (poor logging)
+
+## What
+
+### User-Visible Behaviors
+
+1. **Duration dropdown**: Shows 4s, 8s, 12s, 16s, 20s options (was: only 4s, 8s, 12s)
+2. **HD sizes**: Selecting 1920x1080 or 1080x1920 works reliably (was: silently fails)
+3. **Model auto-selection**: App automatically uses `sora-2-pro` when HD size selected (transparent to user)
+4. **Multi-segment**: All segments complete or fail individually with retry; doesn't freeze
+5. **Timeout feedback**: "Video generation timed out after 20 minutes. Please try again." when stuck
+6. **Console logs**: Rich debug logs at every step for development troubleshooting
+
+### Success Criteria
+
+- [ ] Selecting `20` seconds and submitting generates a valid 20-second video
+- [ ] Selecting `1920x1080` size correctly uses `sora-2-pro` model in API call
+- [ ] Selecting `1920x1080` with size `sora-2` is blocked at proxy level with clear error
+- [ ] Multi-segment generation (3+ segments) completes without freezing
+- [ ] A simulated stuck job (mock) times out at 20 minutes with error message
+- [ ] All generation steps log to console with `[OpenAI]`, `[Segment]`, `[Poll]` prefixes
+- [ ] TypeScript compiles without errors: `npm run build`
+- [ ] ESLint passes: `npm run lint`
+
+## All Needed Context
+
+### Documentation & References
+
+```yaml
+- docfile: PRPs/ai_docs/openai_sora2_api_reference.md
+  why: Definitive reference for valid API parameter values, model constraints, and known bugs
+  section: "Supported size Values by Model", "Known Bug in_progress", "Generation Time Estimates"
+  critical: |
+    - seconds valid values: ['4', '8', '12', '16', '20'] (NOT just 4/8/12)
+    - 1920x1080 and 1080x1920 REQUIRE model: "sora-2-pro" — using sora-2 causes API error
+    - input_reference image must exactly match size pixel dimensions
+    - Poll every 10-20 seconds, not 2 seconds
+    - 20-minute absolute timeout recommended for stuck jobs (5-7% failure rate)
+
+- file: api/proxy-create-video.ts
+  why: The seconds validation MUST be updated from ['4','8','12'] to ['4','8','12','16','20']
+  pattern: Line 56 — the hardcoded validation array; also add size+model validation
+  gotcha: |
+    - This is an Edge Function — no Node.js APIs, only Web APIs
+    - Currently validates seconds but NOT size compatibility with model
+    - Add server-side check: if size is 1920x1080 or 1080x1920, model must be sora-2-pro
+
+- file: src/components/PromptForm.tsx
+  why: Home page duration dropdown needs 16s and 20s options added
+  pattern: Lines 62-66 — the <select> for seconds with <option> values
+  gotcha: |
+    - Also update the size selector — "1792x1024" may be wrong (should be "1920x1080")
+    - When HD size is selected, must ensure model is forced to sora-2-pro
+
+- file: src/components/scene-builder/PromptEditor.tsx
+  why: Scene builder duration dropdown also only shows 4/8/12
+  pattern: Lines 38-42 — the <select> for seconds
+  gotcha: |
+    - This component uses hardcoded model: 'sora-2' when creating scenes (line 68)
+    - When size is 1920x1080 or 1080x1920, model must be auto-switched to sora-2-pro
+
+- file: src/services/openaiService.ts
+  why: pollUntilComplete needs timeout + slower interval + logging
+  pattern: Lines 59-86 — the while(true) polling loop with 2-second delay
+  gotcha: |
+    - Currently polls every 2 SECONDS — API recommends 10-20 seconds
+    - No timeout — job stuck in in_progress will hang FOREVER
+    - Implement 20-minute absolute timeout (Date.now() + 20*60*1000)
+    - Add [Poll] prefixed console logs: status, progress, elapsed time
+
+- file: src/App.tsx
+  why: Multi-segment generation loop needs per-segment error recovery and timeout handling
+  pattern: Lines 254-313 — the for loop generating segments
+  gotcha: |
+    - Currently throws segmentError which aborts ALL remaining segments
+    - Should mark failed segment, log error, and continue with remaining segments
+    - OR: implement retry per segment before giving up
+    - The downloadVideo call on line 293 uses the job.id from createVideo, but
+      if the job.id wasn't returned from pollUntilComplete, it might be wrong
+
+- file: src/types/index.ts
+  why: The comment on line 35 says "OpenAI API expects string: '4', '8', or '12'" — update it
+  pattern: CreateVideoRequest interface, seconds field comment
+  gotcha: Update comment to reflect new valid values ['4', '8', '12', '16', '20']
+```
+
+### Current Codebase Tree
+
+```bash
+sora-2-app/
+├── api/                          # Vercel Edge Functions (CORS proxies to OpenAI)
+│   ├── proxy-create-video.ts     # POST /videos — NEEDS: seconds validation fix, size+model validation
+│   ├── proxy-get-status.ts       # GET /videos/{id} — OK
+│   ├── proxy-remix-video.ts      # POST /videos/{id}/remix — OK
+│   ├── proxy-plan-prompts.ts     # AI segment planning — OK
+│   ├── proxy-prompt-delta.ts     # Prompt analysis — OK
+│   ├── get-upload-url.ts         # GCS presigned URLs — OK
+│   ├── get-video-url.ts          # GCS video URLs — OK
+│   ├── save-video-metadata.ts    # DB metadata save — OK
+│   └── list-scenes.ts            # DB scene listing — OK
+├── src/
+│   ├── components/
+│   │   ├── PromptForm.tsx         # NEEDS: 16s/20s options; HD size auto-model logic
+│   │   ├── SegmentProgress.tsx    # OK
+│   │   ├── OverallProgress.tsx    # OK
+│   │   └── scene-builder/
+│   │       ├── PromptEditor.tsx   # NEEDS: 16s/20s options; HD auto-model logic
+│   │       └── ...
+│   ├── services/
+│   │   ├── openaiService.ts       # NEEDS: polling timeout, slower interval, logging
+│   │   ├── videoService.ts        # OK
+│   │   ├── remixService.ts        # OK
+│   │   └── cloudStorageService.ts # OK
+│   ├── stores/
+│   │   ├── videoStore.ts          # OK
+│   │   └── sceneBuilderStore.ts   # NEEDS: logging in createNewScene, remixCurrentVersion, extendScene
+│   ├── types/index.ts             # NEEDS: comment update for seconds valid values
+│   ├── App.tsx                    # NEEDS: segment loop error recovery + logging
+│   └── utils/
+│       └── videoFrameExtractor.ts # OK
+```
+
+### Desired Codebase Changes (files modified, none created)
+
+All fixes are in existing files — no new files needed.
+
+### Known Gotchas of This Codebase
+
+```typescript
+// CRITICAL: proxy-create-video.ts is a Vercel Edge Function
+// - Only Web APIs available (no Node.js fs, path, etc.)
+// - Edge functions have strict execution limits
+// - FormData handling is native (no multer)
+
+// CRITICAL: Model auto-selection for Pro/HD sizes
+// The code in sceneBuilderStore.ts hardcodes model: 'sora-2'
+// The code in App.tsx hardcodes model: 'sora-2'
+// Both MUST use 'sora-2-pro' when any of these Pro sizes are chosen:
+//   '1792x1024', '1024x1792', '1920x1080', '1080x1920'
+// Implement a helper: getModelForSize(size: string): string
+
+// IMPORTANT: ALL size values in PromptForm.tsx ARE VALID OpenAI API values:
+// - '1280x720' — valid, sora-2 compatible
+// - '1792x1024' — valid, sora-2-pro ONLY (labeled "1024p Pro")
+// - '720x1280'  — valid, sora-2 compatible
+// - '1024x1792' — valid, sora-2-pro ONLY (labeled "Portrait Pro")
+// The PromptForm.tsx size values are CORRECT, they just need auto model selection.
+// PromptEditor.tsx has different Pro sizes: '1920x1080' and '1080x1920' — also valid sora-2-pro.
+
+// FULL list of confirmed valid size values (OpenAI API):
+// sora-2:     '480x480', '480x854', '854x480', '720x720', '720x1280', '1280x720', '1080x1080'
+// sora-2-pro: '720x1280', '1280x720', '1792x1024', '1024x1792', '1920x1080', '1080x1920'
+
+// CRITICAL: inputReference (frame continuity) image size
+// When using inputReference for frame continuity between segments,
+// the JPEG blob extracted by videoFrameExtractor must match the video's size exactly.
+// Currently extractLastFrame() uses canvas at video dimensions — this is correct
+// as long as the video itself is the correct size. Being off by 1 pixel causes error.
+
+// CRITICAL: pollUntilComplete is used in:
+// - App.tsx (home page, multi-segment)
+// - sceneBuilderStore.ts (createNewScene, extendScene)
+// - remixService.ts (autoRemix)
+// A timeout in pollUntilComplete will propagate correctly to all callers.
+
+// CRITICAL: downloadVideo in openaiService.ts downloads from OpenAI CDN directly
+// This bypasses the Vercel proxy — requires CORS support from OpenAI CDN.
+// Currently works because OpenAI CDN allows direct browser access.
+
+// CRITICAL: The seconds param in API is always a STRING not a number
+// - formData.seconds is number (UI)
+// - CreateVideoRequest.seconds is string (API)
+// - Conversion: String(formData.seconds)
+
+// NOTE: planningService.ts also has a comment referencing only 4/8/12 seconds
+// Update the comment there too when adding 16/20 second support.
+```
+
+## Implementation Blueprint
+
+### Data Models and Structure
+
+```typescript
+// In src/types/index.ts — update comment only
+export interface CreateVideoRequest {
+  apiKey: string;
+  prompt: string;
+  seconds: string; // OpenAI API expects string: '4', '8', '12', '16', or '20'
+  size: string;
+  model: string;
+  remixedFromVideoId?: string;
+  inputReference?: Blob;
+}
+
+// Helper type for model selection (add to src/types/index.ts or a utils file)
+// VALID_SECONDS: string[] = ['4', '8', '12', '16', '20']
+// HD_SIZES: string[] = ['1920x1080', '1080x1920']
+// getModelForSize(size: string): 'sora-2' | 'sora-2-pro'
+//   - if size is in HD_SIZES, return 'sora-2-pro'
+//   - otherwise return 'sora-2'
+```
+
+### Implementation Tasks (ordered by dependencies)
+
+```yaml
+Task 1: UPDATE src/types/index.ts
+  - MODIFY: Comment on CreateVideoRequest.seconds field
+  - FROM: "// OpenAI API expects string: '4', '8', or '12'"
+  - TO: "// OpenAI API expects string: '4', '8', '12', '16', or '20'"
+  - ADD: Export constant VALID_SECONDS = ['4', '8', '12', '16', '20'] as const
+  - ADD: Export constant HD_SIZES = ['1920x1080', '1080x1920'] as const
+  - ADD: Export helper function getModelForSize(size: string): 'sora-2' | 'sora-2-pro'
+  - NAMING: All exports in src/types/index.ts following existing pattern
+
+Task 2: UPDATE api/proxy-create-video.ts
+  - MODIFY: Line 56 — change validation array from ['4', '8', '12'] to ['4', '8', '12', '16', '20']
+  - ADD: After seconds validation, add size+model validation:
+    - If size is '1920x1080' or '1080x1920' AND model is NOT 'sora-2-pro', return 400 error
+    - Error message: "HD resolution (1920x1080 or 1080x1920) requires model sora-2-pro"
+  - ADD: console.log at start with request params (for debugging):
+    `console.log('[proxy-create-video] Request:', { model, prompt: prompt?.slice(0,50), seconds: secondsStr, size })`
+  - ADD: console.log on OpenAI API response status:
+    `console.log('[proxy-create-video] OpenAI response status:', openaiResponse.status)`
+  - PRESERVE: All existing CORS proxy logic and FormData handling
+
+Task 3: UPDATE src/services/openaiService.ts
+  - MODIFY: pollUntilComplete method (lines 59-86)
+  - CHANGE: setTimeout delay from 2000ms to 10000ms (10 seconds, more respectful of API)
+  - ADD: Timeout mechanism — 20-minute absolute timeout
+    ```typescript
+    const POLL_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+    const startTime = Date.now();
+    while (true) {
+      if (Date.now() - startTime > POLL_TIMEOUT_MS) {
+        throw new Error(`Video generation timed out after 20 minutes. Job ID: ${videoId}. Please try again.`);
+      }
+      // ... existing poll logic
+    }
+    ```
+  - ADD: Logging in pollUntilComplete:
+    ```typescript
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log(`[Poll] Job ${videoId}: status=${job.status}, progress=${job.progress ?? 'N/A'}%, elapsed=${elapsed}s`);
+    ```
+  - ADD: Logging in createVideo:
+    ```typescript
+    console.log('[OpenAI] Creating video:', { model: request.model, seconds: request.seconds, size: request.size, hasInputRef: !!request.inputReference });
+    // After response:
+    console.log('[OpenAI] Video job created:', { id: response.data.id, status: response.data.status });
+    ```
+  - ADD: Logging in downloadVideo:
+    ```typescript
+    console.log('[OpenAI] Downloading video:', videoId);
+    // After response:
+    console.log('[OpenAI] Video downloaded, size:', response.data.size, 'bytes');
+    ```
+
+Task 4: UPDATE src/components/PromptForm.tsx (Home page)
+  - ADD: Two new options to the seconds <select> dropdown:
+    ```tsx
+    <option value={16}>16 seconds</option>
+    <option value={20}>20 seconds</option>
+    ```
+  - KEEP: Size dropdown values AS-IS — "1792x1024" and "1024x1792" ARE valid OpenAI API Pro sizes
+  - NOTE: No UI change needed for the size dropdown — values are already correct
+  - The labels ("1024p Pro", "Portrait Pro") already communicate the Pro requirement
+
+Task 5: UPDATE src/components/scene-builder/PromptEditor.tsx
+  - ADD: Two new options to the seconds <select> dropdown:
+    ```tsx
+    <option value="16">16 seconds</option>
+    <option value="20">20 seconds</option>
+    ```
+  - MODIFY: Size dropdown options — replace "1920x1080" and "1080x1920" entries to note they require sora-2-pro:
+    ```tsx
+    <option value="1920x1080">1920x1080 (Full HD Landscape - Pro)</option>
+    <option value="1080x1920">1080x1920 (Full HD Portrait - Pro)</option>
+    ```
+  - MODIFY: The createNewScene call (line 65-69) — use getModelForSize(size) instead of hardcoded 'sora-2':
+    ```tsx
+    createNewScene(newScenePrompt, {
+      seconds,
+      size,
+      model: getModelForSize(size), // auto-selects sora-2-pro for HD sizes
+    });
+    ```
+  - IMPORT: Import getModelForSize from '../../types'
+
+Task 6: UPDATE src/App.tsx (Home page multi-segment generation)
+  - MODIFY: handleGenerate and handleApprovePlan functions
+  - CRITICAL: Pass correct model based on size — currently hardcodes 'sora-2':
+    ```typescript
+    // Line 275 in handleGenerate — change:
+    model: 'sora-2',  // WRONG
+    // TO:
+    model: getModelForSize(formData.size), // AUTO-SELECT based on size
+    ```
+    Same fix needed in handleApprovePlan (line 155).
+  - ADD: Logging at each segment step:
+    ```typescript
+    console.log(`[Segment ${i+1}/${formData.numSegments}] Starting generation...`, {
+      prompt: formData.prompt.slice(0, 50),
+      seconds: formData.seconds,
+      size: formData.size,
+      model: getModelForSize(formData.size)
+    });
+    // After job creation:
+    console.log(`[Segment ${i+1}] Job created: ${job.id}`);
+    // After polling completes:
+    console.log(`[Segment ${i+1}] Completed, downloading...`);
+    // After download:
+    console.log(`[Segment ${i+1}] Downloaded: ${blob.size} bytes`);
+    ```
+  - MODIFY: Segment error handling — instead of rethrowing immediately, log and mark as failed
+    then continue with remaining segments (partial success is better than total failure):
+    ```typescript
+    } catch (segmentError: any) {
+      console.error(`[Segment ${i+1}] FAILED:`, segmentError.message);
+      segment.status = 'failed';
+      segment.error = segmentError.message || 'Failed to generate segment';
+      setSegments([...segmentList]);
+      // Don't throw — continue with remaining segments
+      // But track that we have failures
+      hasFailures = true;
+    }
+    ```
+    After loop, if all segments failed, throw a combined error.
+    If some succeeded, proceed with concatenation of successful blobs only.
+  - IMPORT: Import getModelForSize from './types'
+
+Task 7: UPDATE src/stores/sceneBuilderStore.ts
+  - ADD: Logging in createNewScene (after set isGenerating: true):
+    ```typescript
+    console.log('[SceneBuilder] Creating new scene:', { prompt: prompt.slice(0, 50), parameters });
+    ```
+  - ADD: Logging in remixCurrentVersion:
+    ```typescript
+    console.log('[SceneBuilder] Remixing scene:', { sceneId: currentSceneId, newPrompt: scene.prompt.slice(0, 50) });
+    ```
+  - ADD: Logging in extendScene:
+    ```typescript
+    console.log('[SceneBuilder] Extending scene:', { sceneId: currentSceneId, newPrompt: newPrompt.slice(0, 50) });
+    ```
+  - These logs help debug scene builder operations in the browser console
+  - DO NOT change logic — only add logging
+
+Task 8: UPDATE src/services/planningService.ts
+  - READ the file first to understand context
+  - FIND: Any comment or validation referencing only '4', '8', '12' seconds
+  - UPDATE: The comment/string to include '16' and '20'
+  - DO NOT change logic — only update documentation comments
+
+Task 9: VERIFY api/proxy-get-status.ts
+  - READ the file and verify it correctly forwards to GET /videos/{video_id}
+  - VERIFY the response passes through job.status correctly
+  - If any issues found, fix them
+  - ADD: Logging: `console.log('[proxy-get-status] Job', videoId, ':', data.status, data.progress + '%')`
+```
+
+### Implementation Patterns & Key Details
+
+```typescript
+// PATTERN: getModelForSize helper (add to src/types/index.ts)
+// All four Pro sizes require sora-2-pro:
+// '1792x1024', '1024x1792' (PromptForm.tsx Pro options)
+// '1920x1080', '1080x1920' (PromptEditor.tsx Full HD options)
+export const PRO_SIZES = ['1792x1024', '1024x1792', '1920x1080', '1080x1920'] as const;
+export const VALID_SECONDS = ['4', '8', '12', '16', '20'] as const;
+
+export function getModelForSize(size: string): 'sora-2' | 'sora-2-pro' {
+  return PRO_SIZES.includes(size as typeof PRO_SIZES[number]) ? 'sora-2-pro' : 'sora-2';
+}
+
+// PATTERN: Timeout in pollUntilComplete (openaiService.ts)
+async pollUntilComplete(videoId, apiKey, onProgress) {
+  const POLL_TIMEOUT_MS = 20 * 60 * 1000;
+  const POLL_INTERVAL_MS = 10 * 1000;
+  const startTime = Date.now();
+
+  while (true) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > POLL_TIMEOUT_MS) {
+      throw new Error(`Video generation timed out after 20 minutes. Job ID: ${videoId}`);
+    }
+
+    const job = await this.getVideoStatus(videoId, apiKey);
+    console.log(`[Poll] ${videoId}: status=${job.status}, progress=${job.progress ?? '?'}%, elapsed=${Math.round(elapsed/1000)}s`);
+
+    if (onProgress && job.progress !== undefined) onProgress(job.progress);
+    if (job.status === 'completed') return job;
+    if (job.status === 'failed') throw new Error(job.error?.message || 'Video generation failed');
+
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
+// PATTERN: Server-side validation in proxy-create-video.ts
+const validSeconds = ['4', '8', '12', '16', '20'];
+if (!validSeconds.includes(secondsStr)) {
+  return new Response(JSON.stringify({
+    error: `Invalid seconds value: must be one of ${validSeconds.join(', ')}, got '${secondsStr}'`
+  }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+}
+
+// Pro-only sizes require sora-2-pro model
+const proSizes = ['1792x1024', '1024x1792', '1920x1080', '1080x1920'];
+if (proSizes.includes(String(size)) && model !== 'sora-2-pro') {
+  return new Response(JSON.stringify({
+    error: `Pro resolution (${size}) requires model 'sora-2-pro', got '${model}'`
+  }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+}
+
+// PATTERN: Segment error recovery in App.tsx
+let hasFailures = false;
+const successfulBlobs: Blob[] = [];
+
+for (let i = 0; i < numSegments; i++) {
+  try {
+    // ... generate segment
+    successfulBlobs.push(blob);
+  } catch (segmentError: any) {
+    console.error(`[Segment ${i+1}] FAILED:`, segmentError.message);
+    segment.status = 'failed';
+    segment.error = segmentError.message;
+    setSegments([...segmentList]);
+    hasFailures = true;
+    // Continue loop — don't throw
+  }
+}
+
+if (successfulBlobs.length === 0) {
+  throw new Error('All segments failed to generate. Please try again.');
+}
+// Concatenate only successful blobs
+```
+
+### Integration Points
+
+```yaml
+MODEL_SELECTION:
+  - src/types/index.ts: Add getModelForSize() helper exported from types
+  - Used in: src/App.tsx, src/components/PromptForm.tsx (if needed), src/stores/sceneBuilderStore.ts
+  - src/components/scene-builder/PromptEditor.tsx: import getModelForSize from '../../types'
+
+VALIDATION_SYNC:
+  - api/proxy-create-video.ts: Server validates seconds AND size+model compatibility
+  - src/components/PromptForm.tsx: Client validates by only offering valid sizes per model context
+  - The server is the source of truth; client is for UX only
+
+LOGGING_CONVENTION:
+  - Use bracket prefixes for filtering: [OpenAI], [Poll], [Segment N], [SceneBuilder], [proxy-create-video]
+  - Log BEFORE API calls with params, AFTER with result/status
+  - Don't log full prompts (truncate to 50 chars) or API keys
+```
+
+## Validation Loop
+
+### Level 1: TypeScript & Lint
+
+```bash
+# Run after ALL changes are complete
+cd /Users/apple/Work/code/content/sora-2-app
+npm run build    # TypeScript type check + Vite build
+npm run lint     # ESLint
+
+# Expected: Zero errors. Fix all TypeScript and lint errors before proceeding.
+# Common issues to watch:
+# - getModelForSize import missing in App.tsx or PromptEditor.tsx
+# - Type mismatch on seconds (number vs string)
+# - HD_SIZES tuple type issues with .includes()
+```
+
+### Level 2: Manual Smoke Test (dev server)
+
+```bash
+# Start dev server with Edge Functions
+npm run dev:vercel
+# Open http://localhost:3000
+
+# Test 1: 20-second video generation
+# - Enter API key
+# - Enter a simple prompt
+# - Select "20 seconds" duration
+# - Select "1280x720" size
+# - Click Generate
+# - VERIFY: Request goes through without seconds validation error
+# - VERIFY: Console shows [OpenAI] Creating video: { seconds: '20', ... }
+# - VERIFY: Console shows [Poll] messages every ~10 seconds
+
+# Test 2: HD format with auto-model
+# - Select "1920x1080" size
+# - VERIFY: Console shows model: 'sora-2-pro' in [OpenAI] log
+# - If you have sora-2-pro access: verify generation completes
+# - If not: verify error message is about sora-2-pro billing, not about invalid size
+
+# Test 3: HD format with wrong model (server validation)
+# - Use browser DevTools to intercept request and change model to 'sora-2'
+# - VERIFY: Server returns 400 with clear error about HD requiring sora-2-pro
+
+# Test 4: Multi-segment (2 segments)
+# - Set segments: 2, duration: 4s, size: 1280x720
+# - VERIFY: Both segments show in UI
+# - VERIFY: Console shows [Segment 1] and [Segment 2] logs
+# - VERIFY: Generation completes and video plays
+
+# Test 5: Timeout simulation (optional)
+# - Temporarily change POLL_TIMEOUT_MS to 5000ms (5 seconds) in openaiService.ts
+# - Start generation
+# - VERIFY: Error shows "Video generation timed out" after 5 seconds
+# - Restore original timeout value
+```
+
+### Level 3: Proxy Validation
+
+```bash
+# Verify proxy accepts 20 seconds
+curl -X POST http://localhost:3000/api/proxy-create-video \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"sk-test","prompt":"test","seconds":"20","size":"1280x720","model":"sora-2"}' \
+  | jq .
+# Expected: OpenAI API response (may fail with invalid API key — that's OK, not a proxy error)
+
+# Verify proxy accepts 16 seconds
+curl -X POST http://localhost:3000/api/proxy-create-video \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"sk-test","prompt":"test","seconds":"16","size":"1280x720","model":"sora-2"}' \
+  | jq .
+
+# Verify proxy rejects old invalid value
+curl -X POST http://localhost:3000/api/proxy-create-video \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"sk-test","prompt":"test","seconds":"15","size":"1280x720","model":"sora-2"}' \
+  | jq .
+# Expected: { "error": "Invalid seconds value: must be one of 4, 8, 12, 16, 20..." }
+
+# Verify proxy rejects HD with wrong model
+curl -X POST http://localhost:3000/api/proxy-create-video \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"sk-test","prompt":"test","seconds":"8","size":"1920x1080","model":"sora-2"}' \
+  | jq .
+# Expected: { "error": "HD resolution (1920x1080) requires model 'sora-2-pro'..." }
+
+# Verify proxy allows HD with correct model
+curl -X POST http://localhost:3000/api/proxy-create-video \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"sk-test","prompt":"test","seconds":"8","size":"1920x1080","model":"sora-2-pro"}' \
+  | jq .
+# Expected: OpenAI API response (auth error OK, not proxy validation error)
+```
+
+## Final Validation Checklist
+
+### Technical Validation
+
+- [ ] `npm run build` passes with zero TypeScript errors
+- [ ] `npm run lint` passes with zero ESLint errors
+- [ ] `npm run dev:vercel` starts without errors on port 3000
+- [ ] All 4 curl tests pass as expected (Tasks 3 Level above)
+
+### Feature Validation
+
+- [ ] Duration dropdown shows: 4s, 8s, 12s, 16s, 20s (both PromptForm and PromptEditor)
+- [ ] Selecting 1920x1080 in PromptForm → console shows `model: 'sora-2-pro'`
+- [ ] Selecting 1920x1080 in PromptEditor → createNewScene called with `model: 'sora-2-pro'`
+- [ ] proxy-create-video.ts rejects seconds not in ['4','8','12','16','20'] with 400
+- [ ] proxy-create-video.ts rejects Pro sizes (1792x1024, 1024x1792, 1920x1080, 1080x1920) with non-pro model with 400
+- [ ] pollUntilComplete logs [Poll] messages with status and elapsed time
+- [ ] pollUntilComplete throws timeout error after configured time (verify with short timeout)
+- [ ] Multi-segment loop with 1 failing segment doesn't abort remaining segments
+- [ ] Console shows [OpenAI], [Poll], [Segment N], [SceneBuilder] prefixed logs
+
+### Code Quality Validation
+
+- [ ] getModelForSize() helper is in src/types/index.ts and exported
+- [ ] getModelForSize() is used in App.tsx (not hardcoded 'sora-2')
+- [ ] getModelForSize() is used in PromptEditor.tsx (not hardcoded 'sora-2')
+- [ ] No hardcoded 'sora-2' strings remain in places that should use getModelForSize()
+- [ ] No new files created — all changes in existing files
+- [ ] Logging is dev-friendly: bracket prefixes, truncated prompts, no API keys
+
+---
+
+## Anti-Patterns to Avoid
+
+- ❌ Don't change poll interval to something faster than 10 seconds (API rate limits)
+- ❌ Don't set timeout shorter than 5 minutes (real generations can take 2-3 minutes)
+- ❌ Don't log API keys or full prompts in console
+- ❌ Don't create new files when existing files can be modified
+- ❌ Don't change the HD size values to anything other than '1920x1080' / '1080x1920' for the direct OpenAI API
+- ❌ Don't use async/await in Edge Functions without proper error wrapping
+- ❌ Don't forget to update BOTH PromptForm.tsx (home) AND PromptEditor.tsx (scene builder)
+- ❌ Don't hardcode model: 'sora-2' anywhere — always use getModelForSize(size)
+
+## Root Cause Summary
+
+### Why 20-second limit wasn't working
+`proxy-create-video.ts:56` has `if (!['4', '8', '12'].includes(secondsStr))` — only 3 values. OpenAI added 16s and 20s in March 2026. Both the proxy validation AND the UI dropdowns need updating.
+
+### Why HD format (1920x1080) fails
+The PromptEditor.tsx creates scenes with `model: 'sora-2'` hardcoded (line 68), but OpenAI requires `sora-2-pro` for any Pro-sized resolution (`1792x1024`, `1024x1792`, `1920x1080`, `1080x1920`). The API returns a model compatibility error.
+The PromptForm.tsx also hardcodes `model: 'sora-2'` in App.tsx (line 275), meaning even when a user picks "1024p Pro (1792x1024)" the request goes out with `sora-2` and fails.
+NOTE: `1792x1024` and `1024x1792` ARE valid direct OpenAI API size values — the size labels in PromptForm are correct, only the model selection is broken.
+
+### Why multi-segment generation stops
+Three compounding issues:
+1. **Polling too aggressive**: 2-second interval violates API guidance (10-20s recommended), may cause rate limiting
+2. **No timeout**: `pollUntilComplete` loops forever — a job stuck in `in_progress` (known 5-7% failure rate) will freeze the entire UI forever
+3. **Error propagation**: The `catch (segmentError)` block re-throws, aborting all remaining segments even if they could have succeeded

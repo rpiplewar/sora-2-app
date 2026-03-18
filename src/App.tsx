@@ -7,13 +7,16 @@ import { OverallProgress } from './components/OverallProgress';
 import { SegmentProgress } from './components/SegmentProgress';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ErrorDisplay } from './components/ErrorDisplay';
+import { VideoHistoryPanel } from './components/VideoHistoryPanel';
 import { useVideoStore } from './stores/videoStore';
 import { openaiService } from './services/openaiService';
 import { videoService } from './services/videoService';
 import { planningService } from './services/planningService';
+import { cloudStorageService } from './services/cloudStorageService';
 import { extractLastFrame } from './utils/videoFrameExtractor';
 import type { PromptFormData, VideoSegment, PlannedSegment } from './types';
 import { getModelForSize } from './types';
+import type { Scene } from './services/cloudStorageService';
 import { SceneBuilder } from './pages/SceneBuilder';
 
 function Home() {
@@ -40,6 +43,23 @@ function Home() {
   const [isPlanning, setIsPlanning] = useState(false);
   const [planConfig, setPlanConfig] = useState<PromptFormData | null>(null);
 
+  // History
+  const [historyItems, setHistoryItems] = useState<Scene[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [reuseValues, setReuseValues] = useState<{ prompt: string; seconds: number; size: string } | null>(null);
+  const [formKey, setFormKey] = useState(0);
+
+  const loadHistory = async () => {
+    try {
+      const scenes = await cloudStorageService.listScenes();
+      setHistoryItems(scenes);
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   // Initialize FFmpeg on mount
   useEffect(() => {
     const initFFmpeg = async () => {
@@ -55,12 +75,13 @@ function Home() {
     };
 
     initFFmpeg();
+    loadHistory();
 
     // Detect mobile browsers
     if (/Mobi|Android/i.test(navigator.userAgent)) {
       setShowMobileWarning(true);
     }
-  }, [setFFmpegReady, setError]);
+  }, [setFFmpegReady, setError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup object URLs on unmount
   useEffect(() => {
@@ -132,6 +153,7 @@ function Home() {
       const segmentList: VideoSegment[] = [];
       let lastFrameBlob: Blob | undefined = undefined;
       let hasFailures = false;
+      const capturedPlanConfig = planConfig; // capture before null-check race
 
       // Generate each segment using planned prompts
       for (let i = 0; i < plannedSegments.length; i++) {
@@ -227,6 +249,20 @@ function Home() {
 
       setProgress(100);
       setStatus('Complete!');
+
+      // Save to history (best-effort)
+      setStatus('Saving to history...');
+      const totalSeconds = plannedSegments.reduce((sum, s) => sum + s.seconds, 0);
+      const basePrompt = capturedPlanConfig?.prompt || plannedSegments[0]?.prompt || '';
+      cloudStorageService.uploadVideo(finalBlob, {
+        openaiVideoId: crypto.randomUUID(),
+        prompt: basePrompt,
+        seconds: totalSeconds,
+        size: capturedPlanConfig?.size || '1280x720',
+        model: getModelForSize(capturedPlanConfig?.size || '1280x720'),
+      }).then(() => loadHistory()).catch((err) => {
+        console.error('[History] Failed to save planned video to history:', err);
+      }).finally(() => setStatus('Complete!'));
     } catch (err: any) {
       console.error('Generation error:', err);
       setError(err.message || 'Failed to generate video. Please try again.');
@@ -272,6 +308,7 @@ function Home() {
       const segmentList: VideoSegment[] = [];
       let lastFrameBlob: Blob | undefined = undefined;
       let hasFailures = false;
+      let firstJobId: string | null = null;
 
       // Generate each segment
       for (let i = 0; i < formData.numSegments; i++) {
@@ -306,6 +343,7 @@ function Home() {
             inputReference: lastFrameBlob, // Use last frame from previous video
           });
           console.log(`[Segment ${i + 1}] Job created: ${job.id}`);
+          if (i === 0) firstJobId = job.id;
 
           // Poll for completion
           await openaiService.pollUntilComplete(job.id, apiKey, (segmentProgress) => {
@@ -374,6 +412,21 @@ function Home() {
 
       setProgress(100);
       setStatus('Complete!');
+
+      // Save to history (best-effort — don't block or show errors to user)
+      setStatus('Saving to history...');
+      const openaiVideoId = formData.numSegments === 1 && firstJobId
+        ? firstJobId
+        : crypto.randomUUID();
+      cloudStorageService.uploadVideo(finalBlob, {
+        openaiVideoId,
+        prompt: formData.prompt,
+        seconds: videoBlobs.length * formData.seconds,
+        size: formData.size,
+        model: getModelForSize(formData.size),
+      }).then(() => loadHistory()).catch((err) => {
+        console.error('[History] Failed to save video to history:', err);
+      }).finally(() => setStatus('Complete!'));
     } catch (err: any) {
       console.error('Generation error:', err);
       setError(err.message || 'Failed to generate video. Please try again.');
@@ -393,6 +446,24 @@ function Home() {
     setCurrentSegment(0);
     setTotalSegments(0);
     setSegments([]);
+  };
+
+  const handleReusePrompt = (item: Scene) => {
+    setReuseValues({
+      prompt: item.prompt,
+      seconds: parseInt(item.parameters.seconds),
+      size: item.parameters.size,
+    });
+    setFormKey((k) => k + 1); // remount PromptForm with new defaults
+    // If a video is currently shown, clear it so the form is visible
+    if (finalVideoUrl) {
+      URL.revokeObjectURL(finalVideoUrl);
+      reset();
+      setProgress(0);
+      setStatus('');
+      setSegments([]);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -460,9 +531,13 @@ function Home() {
 
           {ffmpegReady && !finalVideoUrl && !plannedSegments && (
             <PromptForm
+              key={formKey}
               onSubmit={handleGenerate}
               onPlanWithAI={handlePlanWithAI}
               disabled={isProcessing || isPlanning}
+              defaultPrompt={reuseValues?.prompt}
+              defaultSeconds={reuseValues?.seconds}
+              defaultSize={reuseValues?.size}
             />
           )}
 
@@ -497,6 +572,12 @@ function Home() {
 
           {finalVideoUrl && <VideoPlayer url={finalVideoUrl} onGenerateNew={handleGenerateNew} />}
         </div>
+
+        <VideoHistoryPanel
+          items={historyItems}
+          loading={historyLoading}
+          onReusePrompt={handleReusePrompt}
+        />
 
         <footer className="text-center mt-20 text-sm text-gray-500">
           <p className="mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>

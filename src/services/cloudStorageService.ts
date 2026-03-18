@@ -262,10 +262,10 @@ export class CloudStorageService {
    * Get or create user session ID
    */
   private getUserSessionId(): string {
-    let sessionId = sessionStorage.getItem('user_session_id');
+    let sessionId = localStorage.getItem('user_session_id');
     if (!sessionId) {
       sessionId = crypto.randomUUID();
-      sessionStorage.setItem('user_session_id', sessionId);
+      localStorage.setItem('user_session_id', sessionId);
     }
     return sessionId;
   }

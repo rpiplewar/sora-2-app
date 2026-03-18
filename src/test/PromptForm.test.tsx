@@ -85,8 +85,7 @@ describe('PromptForm — submit', () => {
     expect(arg.prompt).toBe('A sunset over mountains');
   });
 
-  it('does not call onSubmit with empty prompt', async () => {
-    const user = userEvent.setup();
+  it('does not call onSubmit with empty prompt', () => {
     const onSubmit = vi.fn();
 
     // jsdom doesn't fire form submit for required-field HTML5 validation,

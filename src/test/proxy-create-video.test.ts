@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ─── Inline the proxy validation logic ──────────────────────────────────────
 // We test the exact same logic used in api/proxy-create-video.ts

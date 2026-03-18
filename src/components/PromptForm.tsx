@@ -5,13 +5,16 @@ interface PromptFormProps {
   onSubmit: (data: PromptFormData) => void;
   onPlanWithAI?: (data: PromptFormData) => void;
   disabled?: boolean;
+  defaultPrompt?: string;
+  defaultSeconds?: number;
+  defaultSize?: string;
 }
 
-export function PromptForm({ onSubmit, onPlanWithAI, disabled = false }: PromptFormProps) {
-  const [prompt, setPrompt] = useState('');
-  const [seconds, setSeconds] = useState<number>(4);
+export function PromptForm({ onSubmit, onPlanWithAI, disabled = false, defaultPrompt = '', defaultSeconds = 4, defaultSize = '1280x720' }: PromptFormProps) {
+  const [prompt, setPrompt] = useState(defaultPrompt);
+  const [seconds, setSeconds] = useState<number>(defaultSeconds);
   const [numSegments, setNumSegments] = useState<number>(1);
-  const [size, setSize] = useState('1280x720');
+  const [size, setSize] = useState(defaultSize);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

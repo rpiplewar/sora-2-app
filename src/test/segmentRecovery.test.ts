@@ -1,14 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// ─── Test the segment error recovery logic in isolation ──────────────────────
-// Mirrors the exact logic from App.tsx handleGenerate / handleApprovePlan
-
-interface Segment {
-  id: string;
-  status: 'generating' | 'completed' | 'failed';
-  error?: string;
-}
-
 async function generateSegments(
   numSegments: number,
   generateFn: (i: number) => Promise<string> // returns blob "content"
